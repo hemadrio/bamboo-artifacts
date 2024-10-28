@@ -1,0 +1,122 @@
+name: Bamboo to GitHub Actions Conversion
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: 
+            "${{ secrets.AZURE_CREDENTIALS }}"
+
+      - name: Execute Azure CLI Script
+        run: |
+          #!/bin/bash
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          SUBNET_NAME="testSubnet"
+          ADDRESS_PREFIX="10.1.0.0/16"
+          SUBNET_PREFIX="10.1.0.0/24"
+          VM_NAME="testVM"
+          VM_SIZE="Standard_B1s"
+          ADMIN_USERNAME="azureuser"
+          ADMIN_PASSWORD="ComplexPassword123!"
+
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          az storage account create --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --location $LOCATION --sku Standard_LRS --enable-hierarchical-namespace true --allow-blob-public-access false --kind StorageV2
+          STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" -o tsv)
+          az storage container create --name $CONTAINER_NAME --account-name $STORAGE_ACCOUNT_NAME --account-key $STORAGE_KEY
+          az network vnet create --resource-group $RESOURCE_GROUP --name $VNET_NAME --address-prefix $ADDRESS_PREFIX --subnet-name $SUBNET_NAME --subnet-prefix $SUBNET_PREFIX
+          az vm create --resource-group $RESOURCE_GROUP --name $VM_NAME --image UbuntuLTS --size $VM_SIZE --admin-username $ADMIN_USERNAME --admin-password $ADMIN_PASSWORD --vnet-name $VNET_NAME --subnet $SUBNET_NAME --generate-ssh-keys
+          NSG_NAME="${VM_NAME}NSG"
+          az network nsg rule create --resource-group $RESOURCE_GROUP --nsg-name $NSG_NAME --name SSHAllowRule --priority 1001 --protocol Tcp --destination-port-range 22 --access Allow
+          STORAGE_ACCOUNT_ID=$(az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --query "id" -o tsv)
+          az role assignment create --assignee $AZURE_CLIENT_ID --role "Storage Blob Data Contributor" --scope $STORAGE_ACCOUNT_ID
+
+      - name: Execute AWS CLI Script
+        run: |
+          #!/bin/bash
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+          RESOURCE_TAG="BambooTestResource"
+          VPC_NAME="TestVPC"
+          SUBNET_NAME="TestSubnet"
+          SECURITY_GROUP_NAME="TestSecurityGroup"
+          INSTANCE_TYPE="t2.micro"
+          KEY_NAME="TestKeyPair"
+          S3_BUCKET_NAME="test-bamboo-s3-bucket-$RANDOM"
+
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          aws s3api create-bucket --bucket $S3_BUCKET_NAME --region $AWS_REGION --create-bucket-configuration LocationConstraint=$AWS_REGION
+          aws s3api put-public-access-block --bucket $S3_BUCKET_NAME --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query 'Vpc.VpcId' --output text --profile $AWS_PROFILE)
+          aws ec2 create-tags --resources $VPC_ID --tags Key=Name,Value=$VPC_NAME --profile $AWS_PROFILE
+          SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24 --query 'Subnet.SubnetId' --output text --profile $AWS_PROFILE)
+          SECURITY_GROUP_ID=$(aws ec2 create-security-group --group-name $SECURITY_GROUP_NAME --description "Security group for SSH access" --vpc-id $VPC_ID --query 'GroupId' --output text --profile $AWS_PROFILE)
+          aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --profile $AWS_PROFILE
+          aws ec2 run-instances --image-id ami-1234567890abcdef0 --instance-type $INSTANCE_TYPE --key-name $KEY_NAME --security-group-ids $SECURITY_GROUP_ID --subnet-id $SUBNET_ID --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$RESOURCE_TAG}]" --profile $AWS_PROFILE
+
+      - name: Execute GCP CLI Script
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: 
+            "${{ secrets.GCP_CREDENTIALS }}"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            my-complex-image:latest
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image
+          path: |
+            my-complex-image-latest.tar
+
+  update-build-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+          --header 'Accept: application/vnd.github+json' \
+          --header "x-github-token: ${{ secrets.GITHUB_TOKEN }}" \
+          --header 'Content-Type: application/json' \
+          --data '{
+            "event_type": "build_status",
+            "client_payload": {
+              "build_result_url": "https://bamboo.air-watch.com/browse/${{ github.event.workflow }}-${{ github.run_number }}",
+              "context": "${{ github.workflow }}",
+              "commit_id": "${{ github.sha }}",
+              "build_status": "InProgress",
+              "build_plan_key": "${{ github.event.workflow }}",
+              "build_number": "${{ github.run_number }}",
+              "git_url": "${{ github.repository }}"
+            }
+          }'
