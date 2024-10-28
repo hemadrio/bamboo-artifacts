@@ -1,0 +1,107 @@
+name: KLMN Workflow
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '*/3 * * * *'
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Azure CLI Script Execution
+        env:
+          AZURE_SUBSCRIPTION_ID: '12345678-1234-1234-1234-123456789abc'
+          AZURE_CLIENT_ID: '${{ secrets.AZURE_CLIENT_ID }}'
+          AZURE_CLIENT_SECRET: '${{ secrets.AZURE_CLIENT_SECRET }}'
+          AZURE_TENANT_ID: '${{ secrets.AZURE_TENANT_ID }}'
+        run: |
+          #!/bin/bash
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          # Your Azure Script
+
+      - name: Google Cloud CLI Script Execution
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}'
+        run: |
+          #!/bin/bash
+          PROJECT_ID="test-project"
+          # Your GCP Script
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data "{
+                \"event_type\": \"build_status\",
+                \"client_payload\": {
+                  \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.run_id }}\",
+                  \"context\": \"KLMN\",
+                  \"commit_id\": \"${{ github.sha }}\",
+                  \"build_status\": \"InProgress\",
+                }
+              }"
+
+  docker-artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          docker build -t $IMAGE_NAME:latest .
+          docker save -o $IMAGE_NAME-latest.tar $IMAGE_NAME:latest
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+
+  docker-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Docker Operations
+        run: |
+          # Your Docker Script
+
+      - name: Multi-container Setup
+        run: |
+          docker-compose -f docker-compose.prod.yml up -d --build
+
+  junit-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Run JUnit Tests
+        run: |
+          mvn test
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2.12.0
+        with:
+          files: '**/test-reports/*.xml'
+
+      - name: Generate Coverage Report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.2.0
+        with:
+          reports: '**/test-reports/*.xml'
+
