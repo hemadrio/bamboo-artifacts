@@ -1,0 +1,94 @@
+name: Bamboo Plan Conversion
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-test-publish-sonar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Azure CLI Setup
+        run: |
+          echo "Logging into Azure..."
+          az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+          echo "Setting subscription..."
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Execute Azure CLI Commands
+        run: |
+          az group create --name testResourceGroup --location eastus
+          az storage account create --name teststorageaccount${{ github.run_id }} --resource-group testResourceGroup --location eastus --sku Standard_LRS --enable-hierarchical-namespace true --allow-blob-public-access false --kind StorageV2
+          # Add remaining Azure CLI commands
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2.12.0
+        with:
+          files: '**/test-reports/*.xml'
+
+  update-build-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+                --header 'Content-Type: application/json' \
+                --data "{\n                  \"event_type\": \"build_status\",\n                  \"client_payload\": {\n                    \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.workflow }}-${{ github.run_number }}\",\n                    \"context\": \"${{ github.event.name }}\",\n                    \"commit_id\": \"${{ github.sha }}\",\n                    \"build_status\": \"InProgress\",\n                    \"build_plan_key\": \"${{ github.event.workflow }}\",\n                    \"build_number\": \"${{ github.run_number }}\",\n                    \"git_url\": \"${{ github.event.repository.clone_url }}\"\n                  }\n                }"
+
+  docker-arti:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Build Docker Image
+        run: |
+          docker build -t my-complex-image:latest .
+          docker save -o my-complex-image-latest.tar my-complex-image:latest
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+          path: my-complex-image-latest.tar
+
+  docker-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Login to Docker Hub
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t my-complex-image:$(date +%Y%m%d%H%M) .
+          docker tag my-complex-image:$(date +%Y%m%d%H%M) docker.io/$DOCKER_USERNAME/my-complex-image:latest
+          docker push docker.io/$DOCKER_USERNAME/my-complex-image:latest
+
+      - name: Docker Compose Up
+        run: |
+          docker-compose -f docker-compose.prod.yml up -d --build
+
+      - name: Docker Compose Down
+        run: |
+          docker-compose -f docker-compose.prod.yml down -v
+
+      - name: Logout from Docker Hub
+        run: docker logout
+
