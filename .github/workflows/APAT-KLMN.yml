@@ -1,0 +1,89 @@
+name: KLMN Pipeline
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Azure CLI Script Execution
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          #!/bin/bash
+          # Azure CLI Script
+          # (Refer to the Bamboo YAML for the full script content)
+
+      - name: AWS CLI Script Execution
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: ${{ secrets.AWS_PROFILE }}
+        run: |
+          #!/bin/bash
+          # AWS CLI Script
+          # (Refer to the Bamboo YAML for the full script content)
+
+      - name: Google Cloud CLI Script Execution
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          #!/bin/bash
+          # Google Cloud CLI Script
+          # (Refer to the Bamboo YAML for the full script content)
+
+  update-build-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Update Build Status
+        env:
+          GITHUB_WEBHOOK_URL: ${{ secrets.GITHUB_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -v POST "${GITHUB_WEBHOOK_URL}"
+          # (Refer to the Bamboo YAML for sending the build status)
+
+  docker-arti:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Build Docker Image
+        run: |
+          docker build -t my-complex-image:latest .
+
+      - name: Save Docker Image
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+          path: my-complex-image-latest.tar
+
+      - name: Load and Run Docker Image
+        uses: actions/download-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name my-complex-image-container my-complex-image:latest
+
+  docker-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Docker Operations
+        run: |
+          #!/bin/bash
+          # Docker operations script
+          # (Refer to the Bamboo YAML for the Docker shell script)
