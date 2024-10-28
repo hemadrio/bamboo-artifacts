@@ -1,0 +1,110 @@
+name: KLMN CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script Execution
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Run Azure CLI Script
+        run: |
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          # Remaining Azure CLI commands from the script
+
+      - name: AWS CLI Script Execution
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: test-profile
+        run: |
+          echo "Configuring AWS CLI"
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # Remaining AWS CLI commands from the script
+
+      - name: Google Cloud CLI Script Execution
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+      - name: Run Google Cloud CLI Script
+        run: |
+          echo "Authenticating with Google Cloud"
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          # Remaining Google Cloud CLI commands from the script
+
+  update-build-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+                  --header 'Accept: application/vnd.github+json' \
+                  --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+                  --header 'Content-Type: application/json' \
+                  --data "{ \"event_type\": \"build_status\", \"client_payload\": { \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.repository.name }}-${{ github.run_number }}\", \"context\": \"${{ github.event.repository.name }}\", \"commit_id\": \"${{ github.sha }}\", \"build_status\": \"InProgress\", \"build_plan_key\": \"${{ github.event.repository.name }}\", \"build_number\": \"${{ github.run_number }}\", \"git_url\": \"${{ github.event.repository.clone_url }}\" } }"
+
+  docker-arti:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          tags: my-complex-image:latest
+
+      - name: Save Docker Image As Artifact
+        run: |
+          docker save my-complex-image:latest -o my-complex-image-latest.tar
+          echo "Saving Docker image to artifact"
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: my-complex-image-latest.tar
+
+  docker-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Docker Login
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Docker Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          tags: |
+            ${{ secrets.DOCKER_REGISTRY }}/my-complex-image:latest
+            ${{ secrets.DOCKER_REGISTRY }}/my-complex-image:${{ github.sha }}
+          push: true
+
+      - name: Run Docker Compose
+        run: |
+          docker-compose -f docker-compose.prod.yml up -d --build
+
+      - name: Docker Compose Down
+        run: |
+          docker-compose -f docker-compose.prod.yml down -v
