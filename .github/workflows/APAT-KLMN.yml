@@ -1,0 +1,102 @@
+name: Bamboo Plan Conversion
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  default_stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: 
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure CLI Script
+        run: |
+          echo "Logging into Azure..."
+          az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          az group create --name testResourceGroup --location eastus
+          # Additional Azure CLI commands...
+
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: test-profile
+        run: |
+          echo "Configuring AWS CLI..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # Additional AWS CLI commands...
+
+      - name: Setup Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+      - name: Google Cloud CLI Script
+        run: |
+          echo "Authenticating with Google Cloud..."
+          gcloud config set project test-project
+          # Additional GCP CLI commands...
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "$GITHUB_WEBHOOK_URL" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'Content-Type: application/json' \
+            --data '{ "event_type": "build_status", "client_payload": { "build_result_url": "https://bamboo.air-watch.com/browse/${{ github.run_id }}", "context": "${{ github.event_name }}", "commit_id": "${{ github.sha }}", "build_status": "InProgress", "build_plan_key": "APAT-KLMN", "build_number": "${{ github.run_number }}", "git_url": "${{ github.event.repository.clone_url }}" } }'
+
+      - name: Docker with Artifacts
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+          docker save -o $IMAGE_NAME-$TAG.tar $IMAGE_NAME:$TAG
+          if [ -f "$IMAGE_NAME-$TAG.tar" ]; then
+              echo "Docker image saved successfully: $IMAGE_NAME-$TAG.tar"
+          else
+              echo "Error: Failed to save Docker image."
+              exit 1
+          fi
+
+      - name: Upload Docker Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: my-complex-image-latest.tar
+
+      - name: Docker Shell Operations
+        run: |
+          DOCKER_USERNAME="your_docker_username"
+          DOCKER_PASSWORD="your_docker_password"
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$CACHE_IMAGE" --build-arg CACHEBUST=$(date +%s)
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" --cache-from "$CACHE_IMAGE" .
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker image prune -f
+          docker rmi "$(docker images -f "dangling=true" -q)"
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          docker-compose -f docker-compose.prod.yml down -v
+          docker logout
+
