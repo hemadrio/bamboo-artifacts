@@ -1,7 +1,7 @@
 version: 2
 plan:
   project-key: APAT
-  key: BCD
+  key: CBA
   name: Android Management Service
   description: 'This service provides Android device management capabilities by integrating with Googles AMAPI DRI: prashanthr braceyd'
 stages:
