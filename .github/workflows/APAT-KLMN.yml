@@ -1,0 +1,121 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - run: |
+          #!/bin/bash
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          echo "Set subscription..."
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          echo "Creating resource group..."
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          # Additional Azure CLI commands...
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: "12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP: "testResourceGroup"
+          LOCATION: "eastus"
+
+      - name: AWS CLI Script
+        run: |
+          #!/bin/bash
+          echo "Configuring AWS CLI..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          echo "Creating S3 bucket..."
+          aws s3api create-bucket --bucket $S3_BUCKET_NAME --region $AWS_REGION --create-bucket-configuration LocationConstraint=$AWS_REGION
+          # Additional AWS CLI commands...
+        shell: bash
+        env:
+          AWS_REGION: "us-east-1"
+          AWS_PROFILE: "test-profile"
+
+      - name: Google Cloud CLI Script
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+
+      - run: |
+          #!/bin/bash
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          echo "Setting project..."
+          gcloud config set project $PROJECT_ID
+          echo "Creating bucket..."
+          gcloud storage buckets create gs://$BUCKET_NAME --project $PROJECT_ID --location $ZONE --uniform-bucket-level-access
+          # Additional Google Cloud CLI commands...
+        shell: bash
+        env:
+          PROJECT_ID: "test-project"
+          ZONE: "us-central1-a"
+
+  update_build_status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data "{\"event_type\": \"build_status\", \"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.workflow }}-${{ github.run_number }}\", \"context\": \"${{ github.event.repository.name }}\", \"commit_id\": \"${{ github.sha }}\", \"build_status\": \"InProgress\", \"build_plan_key\": \"${{ github.event.workflow }}\", \"build_number\": \"${{ github.run_number }}\", \"git_url\": \"${{ github.event.repository.html_url }}\"}}"
+
+  docker_build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set Up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: my-complex-image:latest
+
+      - name: Docker Operations
+        run: |
+          echo "Running Docker operations..."
+          # Docker operations script here
+        shell: bash
+
+  docker_shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Docker Operations
+        run: |
+          echo "Starting Docker operations..."
+          # Docker operations script here
+        shell: bash
