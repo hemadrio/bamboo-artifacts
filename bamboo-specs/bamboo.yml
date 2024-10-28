@@ -2,8 +2,8 @@ version: 2
 plan:
   project-key: APAT
   key: KLMN
-  name: Android Management Service
-  description: 'This service provides Android device management capabilities by integrating with Googles AMAPI DRI: prashanthr braceyd'
+  name: KLMN
+  description: 'KLMN'
 stages:
 - Update Build Status to GitHub:
     manual: false
