@@ -1,0 +1,81 @@
+name: KLMN Pipeline
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.1.0
+        with:
+          fetch-depth: 0
+      - name: Setup Azure CLI
+        uses: Azure/setup-cli@v1
+      - name: Azure CLI Script Execution
+        run: |
+          echo "Logging into Azure..."
+          az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+          # Rest of the Azure CLI script
+          echo "Azure CLI Script execution completed."
+        env:
+          AZURE_SUBSCRIPTION_ID: "12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP: "testResourceGroup"
+          LOCATION: "eastus"
+          # Other environment variables
+      - name: Google Cloud CLI Script Execution
+        run: |
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}"
+          # Rest of the Google Cloud CLI script
+          echo "Google Cloud CLI Script execution completed."
+        env:
+          PROJECT_ID: "test-project"
+          ZONE: "us-central1-a"
+          # Other environment variables
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+                  --header 'Accept: application/vnd.github+json' \
+                  --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                  --header 'Content-Type: application/json' \
+                  --data "{...}"
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+          path: my-complex-image-latest.tar
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+      - name: Load and Run Docker Container
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          docker load -i $IMAGE_TAR
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+      - name: Run Tests and Parse Results
+        uses: EnricoMi/publish-unit-test-result-action@v2.12.0
+        with:
+          files: '**/test-reports/*.xml'
+  docker_shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.1.0
+      - name: Docker Shell Script Execution
+        run: |
+          echo "Logging into Docker Hub..."
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+          # Rest of the Docker operations
+          echo "Docker operations completed successfully."
