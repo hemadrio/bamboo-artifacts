@@ -1,0 +1,144 @@
+name: KLMN Plan
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '*/3 * * * *' # Every 3 hours
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+        with:
+          fetch-depth: 0
+      - name: Set up Azure CLI
+        uses: azure/setup@v1
+      - name: Azure CLI Script Execution
+        run: |
+          #!/bin/bash
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          SUBNET_NAME="testSubnet"
+          ADDRESS_PREFIX="10.1.0.0/16"
+          SUBNET_PREFIX="10.1.0.0/24"
+          VM_NAME="testVM"
+          VM_SIZE="Standard_B1s"
+          ADMIN_USERNAME="azureuser"
+          ADMIN_PASSWORD="ComplexPassword123!"
+
+          az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          az storage account create --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --location $LOCATION --sku Standard_LRS --enable-hierarchical-namespace true --allow-blob-public-access false --kind StorageV2
+          STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" -o tsv)
+          az storage container create --name $CONTAINER_NAME --account-name $STORAGE_ACCOUNT_NAME --account-key $STORAGE_KEY
+          az network vnet create --resource-group $RESOURCE_GROUP --name $VNET_NAME --address-prefix $ADDRESS_PREFIX --subnet-name $SUBNET_NAME --subnet-prefix $SUBNET_PREFIX
+          az vm create --resource-group $RESOURCE_GROUP --name $VM_NAME --image UbuntuLTS --size $VM_SIZE --admin-username $ADMIN_USERNAME --admin-password $ADMIN_PASSWORD --vnet-name $VNET_NAME --subnet $SUBNET_NAME --generate-ssh-keys
+          NSG_NAME="${VM_NAME}NSG"
+          az network nsg rule create --resource-group $RESOURCE_GROUP --nsg-name $NSG_NAME --name SSHAllowRule --priority 1001 --protocol Tcp --destination-port-range 22 --access Allow
+          STORAGE_ACCOUNT_ID=$(az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --query "id" -o tsv)
+          az role assignment create --assignee ${{ secrets.AZURE_CLIENT_ID }} --role "Storage Blob Data Contributor" --scope $STORAGE_ACCOUNT_ID
+      - name: Google Cloud CLI Script
+        run: |
+          #!/bin/bash
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          NETWORK_NAME="test-network"
+          SUBNET_NAME="test-subnet"
+          VM_NAME="test-vm"
+          MACHINE_TYPE="n1-standard-1"
+          BUCKET_NAME="test-bamboo-bucket-$RANDOM"
+
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          gcloud config set project $PROJECT_ID
+          gcloud storage buckets create gs://$BUCKET_NAME --project $PROJECT_ID --location $ZONE --uniform-bucket-level-access
+          gcloud compute networks create $NETWORK_NAME --subnet-mode=custom
+          gcloud compute networks subnets create $SUBNET_NAME --network=$NETWORK_NAME --range=10.0.1.0/24 --region=$ZONE
+          gcloud compute firewall-rules create allow-ssh --network $NETWORK_NAME --allow tcp:22
+          gcloud compute instances create $VM_NAME --zone=$ZONE --machine-type=$MACHINE_TYPE --subnet=$SUBNET_NAME --tags=http-server,https-server --metadata=startup-script='#!/bin/bash
+echo "Hello, World!" > /var/www/html/index.html' --image-family=debian-10 --image-project=debian-cloud
+  update-build-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                --header 'Content-Type: application/json' \
+                --data "{
+                  \"event_type\": \"build_status\",
+                  \"client_payload\": {
+                    \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.repository.name }}-${{ github.run_number }}\",
+                    \"context\": \"${{ github.event.repository.name }}\",
+                    \"commit_id\": \"${{ github.sha }}\",
+                    \"build_status\": \"InProgress\",
+                    \"build_plan_key\": \"${{ github.event.repository.name }}\",
+                    \"build_number\": \"${{ github.run_number }}\",
+                    \"git_url\": \"${{ github.event.repository.clone_url }}\"
+                  }
+                }"
+  docker-arti:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          if [ -f "$IMAGE_TAR" ]; then
+              echo "Docker image saved successfully: $IMAGE_TAR"
+          else
+              echo "Error: Failed to save Docker image."
+              exit 1
+          fi
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+          path: $IMAGE_TAR
+  docker-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+      - name: Docker Operations
+        run: |
+          DOCKER_USERNAME="your_docker_username"
+          DOCKER_PASSWORD="your_docker_password"
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$CACHE_IMAGE" --build-arg CACHEBUST=$(date +%s)
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" --cache-from "$CACHE_IMAGE" .
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker image prune -f
+          docker rmi "$(docker images -f \"dangling=true\" -q)"
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          docker-compose -f docker-compose.prod.yml down -v
+          docker logout
