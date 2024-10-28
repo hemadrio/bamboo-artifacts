@@ -1,0 +1,102 @@
+name: KLMN
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: '12345678-1234-1234-1234-123456789abc'
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          # Further CLI commands...
+
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: 'us-east-1'
+          AWS_PROFILE: 'test-profile'
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          echo "Configuring AWS CLI..."
+          aws configure set region $AWS_REGION
+          # Further CLI commands...
+
+      - name: GCP CLI Script
+        env:
+          PROJECT_ID: 'test-project'
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          # Further CLI commands...
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data "{...}"
+
+  docker_artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+
+      - name: Save and Upload Docker Image
+        run: |
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          echo "Docker image saved successfully: $IMAGE_TAR"
+          mv $IMAGE_TAR ${{ github.workspace }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image
+          path: ${{ github.workspace }}/my-complex-image-latest.tar
+
+      - name: Download and Use Docker Image
+        uses: actions/download-artifact@v4.1.0
+        with:
+          name: docker-image
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name "my-complex-image-container" my-complex-image:latest
+
+  docker_shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Docker Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          # Further Docker commands...
+
