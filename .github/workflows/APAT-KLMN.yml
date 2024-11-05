@@ -1,0 +1,157 @@
+name: KLMN CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.0
+
+      - name: Azure CLI Script Execution
+        uses: azure/login@v2
+        with:
+          creds: 
+            client-id: ${{ secrets.AZURE_CLIENT_ID }}
+            client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+            tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: Execute Azure CLI commands
+        run: |
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          SUBNET_NAME="testSubnet"
+          ADDRESS_PREFIX="10.1.0.0/16"
+          SUBNET_PREFIX="10.1.0.0/24"
+          VM_NAME="testVM"
+          VM_SIZE="Standard_B1s"
+          ADMIN_USERNAME="azureuser"
+          ADMIN_PASSWORD="ComplexPassword123!"
+
+          az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          az storage account create --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --location $LOCATION --sku Standard_LRS --enable-hierarchical-namespace true --allow-blob-public-access false --kind StorageV2
+          STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" -o tsv)
+          az storage container create --name $CONTAINER_NAME --account-name $STORAGE_ACCOUNT_NAME --account-key $STORAGE_KEY
+          az network vnet create --resource-group $RESOURCE_GROUP --name $VNET_NAME --address-prefix $ADDRESS_PREFIX --subnet-name $SUBNET_NAME --subnet-prefix $SUBNET_PREFIX
+          az vm create --resource-group $RESOURCE_GROUP --name $VM_NAME --image UbuntuLTS --size $VM_SIZE --admin-username $ADMIN_USERNAME --admin-password $ADMIN_PASSWORD --vnet-name $VNET_NAME --subnet $SUBNET_NAME --generate-ssh-keys
+          NSG_NAME="${VM_NAME}NSG"
+          az network nsg rule create --resource-group $RESOURCE_GROUP --nsg-name $NSG_NAME --name SSHAllowRule --priority 1001 --protocol Tcp --destination-port-range 22 --access Allow
+          STORAGE_ACCOUNT_ID=$(az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --query "id" -o tsv)
+          az role assignment create --assignee ${{ secrets.AZURE_CLIENT_ID }} --role "Storage Blob Data Contributor" --scope $STORAGE_ACCOUNT_ID
+
+      - name: AWS CLI Script Execution
+        env:
+          AWS_REGION: 'us-east-1'
+          AWS_PROFILE: 'test-profile'
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          S3_BUCKET_NAME="test-bamboo-s3-bucket-$RANDOM"
+          aws s3api create-bucket --bucket $S3_BUCKET_NAME --region $AWS_REGION --create-bucket-configuration LocationConstraint=$AWS_REGION
+          aws s3api put-public-access-block --bucket $S3_BUCKET_NAME --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query 'Vpc.VpcId' --output text --profile $AWS_PROFILE)
+          aws ec2 create-tags --resources $VPC_ID --tags Key=Name,Value=TestVPC --profile $AWS_PROFILE
+          SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24 --query 'Subnet.SubnetId' --output text --profile $AWS_PROFILE)
+          SECURITY_GROUP_ID=$(aws ec2 create-security-group --group-name TestSecurityGroup --description "Security group for SSH access" --vpc-id $VPC_ID --query 'GroupId' --output text --profile $AWS_PROFILE)
+          aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --profile $AWS_PROFILE
+          aws ec2 run-instances --image-id ami-1234567890abcdef0 --instance-type t2.micro --key-name TestKeyPair --security-group-ids $SECURITY_GROUP_ID --subnet-id $SUBNET_ID --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=BambooTestResource}]" --profile $AWS_PROFILE
+
+      - name: GCP CLI Script Execution
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          gcloud auth activate-service-account --key-file="${GOOGLE_APPLICATION_CREDENTIALS}"
+          gcloud config set project test-project
+          BUCKET_NAME="test-bamboo-bucket-$RANDOM"
+          gcloud storage buckets create gs://$BUCKET_NAME --project test-project --location us-central1-a --uniform-bucket-level-access
+          gcloud compute networks create test-network --subnet-mode=custom
+          gcloud compute networks subnets create test-subnet --network=test-network --range=10.0.1.0/24 --region=us-central1-a
+          gcloud compute firewall-rules create allow-ssh --network test-network --allow tcp:22
+          gcloud compute instances create test-vm --zone=us-central1-a --machine-type=n1-standard-1 --subnet=test-subnet --tags=http-server,https-server --metadata=startup-script='#!/bin/bash
+echo "Hello, World!" > /var/www/html/index.html' --image-family=debian-10 --image-project=debian-cloud
+
+  update_build_status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.0
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'Content-Type: application/json' \
+            --data "{\"event_type\": \"build_status\",\"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.repository.full_name }}-\${{ github.run_number }}\",\"context\": \"${{ github.event.repository.name }}\",\"commit_id\": \"${{ github.event.after }}\",\"build_status\": \"InProgress\",\"build_plan_key\": \"${{ github.event.repository.full_name }}\",\"build_number\": \"\${{ github.run_number }}\",\"git_url\": \"${{ github.event.repository.clone_url }}\"}}"
+
+  docker_build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.0
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker Image
+        run: |
+          docker build -t my-complex-image:latest .
+          docker save -o my-complex-image-latest.tar my-complex-image:latest
+        continue-on-error: true
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+          path: my-complex-image-latest.tar
+
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+          path: ./docker-image-artifact
+
+      - name: Load and Run Docker Image
+        run: |
+          docker load -i ./docker-image-artifact/my-complex-image-latest.tar
+          docker run -d --name my-complex-image-container my-complex-image:latest
+
+  docker_shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.0
+
+      - name: Docker Operations
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker pull "docker.io/$DOCKER_USERNAME/my-complex-image:cache" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "my-complex-image:builder" . --cache-from "docker.io/$DOCKER_USERNAME/my-complex-image:cache" --build-arg CACHEBUST=$(date +%s)
+          docker run --rm "my-complex-image:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          docker build --target final -t "my-complex-image:latest" --cache-from "docker.io/$DOCKER_USERNAME/my-complex-image:cache" .
+          docker tag "my-complex-image:latest" "docker.io/$DOCKER_USERNAME/my-complex-image:latest"
+          docker push "docker.io/$DOCKER_USERNAME/my-complex-image:latest"
+          docker image prune -f
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          docker-compose -f docker-compose.prod.yml down -v
+          docker logout
