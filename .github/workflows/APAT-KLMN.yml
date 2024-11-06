@@ -1,0 +1,163 @@
+name: KLMN Workflow
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build_test_publish:
+    name: Build, Test and Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Set up Azure CLI
+        uses: azure/login@v1
+        with:
+          creds: 
+          # Use GitHub secrets for Azure credentials
+
+      - name: Azure Script Execution
+        run: |
+          #!/bin/bash
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          SUBNET_NAME="testSubnet"
+          ADDRESS_PREFIX="10.1.0.0/16"
+          SUBNET_PREFIX="10.1.0.0/24"
+          VM_NAME="testVM"
+          VM_SIZE="Standard_B1s"
+          ADMIN_USERNAME="azureuser"
+          ADMIN_PASSWORD="ComplexPassword123!"
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          echo "Setting subscription to $AZURE_SUBSCRIPTION_ID..."
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          echo "Creating resource group $RESOURCE_GROUP in $LOCATION..."
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          # Continue the Azure CLI script...
+
+      - name: AWS Script Execution
+        run: |
+          #!/bin/bash
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+          RESOURCE_TAG="BambooTestResource"
+          VPC_NAME="TestVPC"
+          SUBNET_NAME="TestSubnet"
+          SECURITY_GROUP_NAME="TestSecurityGroup"
+          INSTANCE_TYPE="t2.micro"
+          KEY_NAME="TestKeyPair"
+          S3_BUCKET_NAME="test-bamboo-s3-bucket-$RANDOM"
+          echo "Creating an S3 bucket: $S3_BUCKET_NAME..."
+          aws s3api create-bucket --bucket $S3_BUCKET_NAME --region $AWS_REGION --create-bucket-configuration LocationConstraint=$AWS_REGION
+          # Continue AWS CLI script...
+
+      - name: GCP Script Execution
+        run: |
+          #!/bin/bash
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          NETWORK_NAME="test-network"
+          SUBNET_NAME="test-subnet"
+          VM_NAME="test-vm"
+          MACHINE_TYPE="n1-standard-1"
+          BUCKET_NAME="test-bamboo-bucket-$RANDOM"
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          echo "Setting Google Cloud project to $PROJECT_ID..."
+          gcloud config set project $PROJECT_ID
+          echo "Creating a Cloud Storage bucket: $BUCKET_NAME..."
+          gcloud storage buckets create gs://$BUCKET_NAME --project $PROJECT_ID --location $ZONE --uniform-bucket-level-access
+          # Continue GCP CLI script...
+
+  update_build_status:
+    name: Update Build Status
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GIT_HUB_WEBHOOK_URL }}" \
+          --header 'Accept: application/vnd.github+json' \
+          --header 'x-github-token: ${{ secrets.G_SVC_BOT_WS1_GITHUB_TOKEN_SECRET }}' \
+          --header 'Content-Type: application/json' \
+          --data "{\"event_type\": \"build_status\", \"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.repository.full_name }}-buildNumber\", \"context\": \"${{ github.event.repository.name }}\", \"commit_id\": \"${{ github.sha }}\", \"build_status\": \"InProgress\", \"build_plan_key\": \"${{ github.event.repository.name }}\", \"build_number\": \"${{ github.run_number }}\", \"git_url\": \"${{ github.event.repository.clone_url }}\"}}"
+
+  docker_artifact:
+    name: Docker Artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          echo "Docker image saved successfully: $IMAGE_TAR"
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+          path: $IMAGE_TAR
+
+  docker_shell:
+    name: Docker Shell
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Docker Operations
+        run: |
+          DOCKER_USERNAME="your_docker_username"
+          DOCKER_PASSWORD="your_docker_password"
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+          echo "Logging into Docker Hub..."
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          echo "Building Docker image with multi-stage builds and caching..."
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$CACHE_IMAGE" --build-arg CACHEBUST=$(date +%s)
+          echo "Running tests on Docker image..."
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          echo "Finalizing production build..."
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" --cache-from "$CACHE_IMAGE" .
+          echo "Tagging and pushing images..."
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          echo "Cleaning up old Docker images..."
+          docker image prune -f
+          docker rmi "$(docker images -f "dangling=true" -q)"
+          echo "Starting multi-container environment using Docker Compose..."
+          docker-compose -f docker-compose.prod.yml up -d --build
+          echo "Checking container status..."
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          echo "Extracting logs for analysis..."
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          echo "Shutting down the environment..."
+          docker-compose -f docker-compose.prod.yml down -v
+          echo "Logging out from Docker Hub..."
+          docker logout
