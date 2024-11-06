@@ -1,0 +1,107 @@
+name: Bamboo Plan Migration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  AZURE_SUBSCRIPTION_ID: "12345678-1234-1234-1234-123456789abc"
+  RESOURCE_GROUP: "testResourceGroup"
+  LOCATION: "eastus"
+  AWS_REGION: "us-east-1"
+  AWS_PROFILE: "test-profile"
+  PROJECT_ID: "test-project"
+  ZONE: "us-central1-a"
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.0
+
+      - name: Azure CLI Script
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - run: |
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          # Additional Azure CLI tasks
+        shell: bash
+
+      - name: AWS CLI Script
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # Additional AWS CLI tasks
+        shell: bash
+
+      - name: GCP CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          gcloud config set project $PROJECT_ID
+          # Additional GCP CLI tasks
+        shell: bash
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data "{...}"
+
+  docker-operations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.0
+
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker Image
+        run: |
+          docker build -t my-complex-image:latest .
+          docker save -o my-complex-image-latest.tar my-complex-image:latest
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+
+      - name: Download and Use Docker Image Artifact
+        uses: actions/download-artifact@v4.1.0
+        with:
+          name: docker-image
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name my-container my-complex-image:latest
+
+  test-results:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2.12.0
+        with:
+          files: '**/test-reports/*.xml'
+
+      - name: Generate Test Report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.2.0
+        with:
+          reports: '**/test-reports/*.xml'
+          targetdir: 'code-coverage-report'
+
