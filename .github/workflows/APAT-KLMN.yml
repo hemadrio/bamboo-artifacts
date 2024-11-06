@@ -1,0 +1,167 @@
+name: KLMN Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Azure CLI Script Execution
+        env:
+          AZURE_SUBSCRIPTION_ID: 12345678-1234-1234-1234-123456789abc
+          RESOURCE_GROUP: testResourceGroup
+          LOCATION: eastus
+          STORAGE_ACCOUNT_NAME: teststorageaccount${{ github.run_id }}
+          CONTAINER_NAME: testcontainer
+          VNET_NAME: testVnet
+          SUBNET_NAME: testSubnet
+          ADDRESS_PREFIX: 10.1.0.0/16
+          SUBNET_PREFIX: 10.1.0.0/24
+          VM_NAME: testVM
+          VM_SIZE: Standard_B1s
+          ADMIN_USERNAME: azureuser
+          ADMIN_PASSWORD: ${{ secrets.AZURE_ADMIN_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          # Azure CLI Commands here
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          # Further Azure CLI commands...
+
+      - name: AWS CLI Script Execution
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: test-profile
+          RESOURCE_TAG: BambooTestResource
+          VPC_NAME: TestVPC
+          SUBNET_NAME: TestSubnet
+          SECURITY_GROUP_NAME: TestSecurityGroup
+          INSTANCE_TYPE: t2.micro
+          KEY_NAME: TestKeyPair
+          S3_BUCKET_NAME: test-bamboo-s3-bucket-${{ github.run_id }}
+        run: |
+          # AWS CLI Commands here
+          echo "Configuring AWS CLI with profile $AWS_PROFILE and region $AWS_REGION..."
+          # Further AWS CLI commands...
+
+      - name: GCP CLI Script Execution
+        env:
+          PROJECT_ID: test-project
+          ZONE: us-central1-a
+          NETWORK_NAME: test-network
+          SUBNET_NAME: test-subnet
+          VM_NAME: test-vm
+          MACHINE_TYPE: n1-standard-1
+          BUCKET_NAME: test-bamboo-bucket-${{ github.run_id }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          # GCP CLI Commands here
+          echo "Authenticating with Google Cloud..."
+          # Further GCP CLI commands...
+
+  update_build_status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Update Build Status
+        env:
+          GITHUB_WEBHOOK_URL: ${{ secrets.GITHUB_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -v POST "$GITHUB_WEBHOOK_URL" \
+              --header 'Accept: application/vnd.github+json' \
+              --header "x-github-token: $GITHUB_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data '{
+                "event_type": "build_status",
+                "client_payload": {
+                  "build_result_url": "https://bamboo.air-watch.com/browse/${{ github.event.repository.full_name }}-${{ github.run_number }}",
+                  "context": "KLMN",
+                  "commit_id": "${{ github.sha }}",
+                  "build_status": "InProgress",
+                  "build_plan_key": "APAT-KLMN",
+                  "build_number": "${{ github.run_number }}",
+                  "git_url": "${{ github.event.repository.clone_url }}"
+                }
+              }'
+
+  docker_artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Build and Save Docker Image
+        run: |
+          IMAGE_NAME=my-complex-image
+          TAG=latest
+          docker build -t $IMAGE_NAME:$TAG .
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          if [ -f "$IMAGE_TAR" ]; then
+            echo "Docker image saved successfully: $IMAGE_TAR"
+          else
+            echo "Error: Failed to save Docker image."
+            exit 1
+          fi
+      - name: Upload Docker Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+
+      - name: Download Docker Artifact
+        uses: actions/download-artifact@v4.1.0
+        with:
+          name: docker-image
+
+      - name: Load and Run Docker Image
+        run: |
+          IMAGE_NAME=my-complex-image
+          TAG=latest
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          docker load -i $IMAGE_TAR
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+          docker ps -f "name=$IMAGE_NAME-container"
+
+  docker_shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Docker Shell Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          IMAGE_NAME=my-complex-image
+          REGISTRY_URL=docker.io/$DOCKER_USERNAME
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$CACHE_IMAGE" --build-arg CACHEBUST=$(date +%s)
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" --cache-from "$CACHE_IMAGE" .
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker image prune -f
+          docker rmi "$(docker images -f "dangling=true" -q)"
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          docker-compose -f docker-compose.prod.yml down -v
+          docker logout
