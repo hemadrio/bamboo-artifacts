@@ -1,0 +1,116 @@
+name: KLMN Workflow
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.0
+
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: 12345678-1234-1234-1234-123456789abc
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          #!/bin/bash
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          echo "Setting subscription to $AZURE_SUBSCRIPTION_ID..."
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          echo "Creating resource group $RESOURCE_GROUP in $LOCATION..."
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          # Additional Azure CLI commands...
+
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: test-profile
+        run: |
+          #!/bin/bash
+          echo "Configuring AWS CLI with profile $AWS_PROFILE and region $AWS_REGION..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # Additional AWS CLI commands...
+
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          #!/bin/bash
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          echo "Setting Google Cloud project to $PROJECT_ID..."
+          gcloud config set project $PROJECT_ID
+          # Additional Google Cloud CLI commands...
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}" \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+                --header 'Content-Type: application/json' \
+                --data "{\n                  \"event_type\": \"build_status\",\n                  \"client_payload\": {\n                    \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.run_id }}\",\n                    \"context\": \"KLMN\",\n                    \"commit_id\": \"${{ github.sha }}\",\n                    \"build_status\": \"InProgress\",\n                    \"build_plan_key\": \"KLMN\",\n                    \"build_number\": \"${{ github.run_number }}\",\n                    \"git_url\": \"${{ github.repository }}\"\n                  }\n                }"
+
+      - name: Docker Build and Save Artifact
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          if [ -f "$IMAGE_TAR" ]; then
+              echo "Docker image saved successfully: $IMAGE_TAR"
+          else
+              echo "Error: Failed to save Docker image."
+              exit 1
+          fi
+        continue-on-error: true
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+
+  docker-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.0
+
+      - name: Complex Docker Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$CACHE_IMAGE" --build-arg CACHEBUST=$(date +%s)
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" --cache-from "$CACHE_IMAGE" .
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker image prune -f
+          docker rmi "$(docker images -f "dangling=true" -q)"
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          docker-compose -f docker-compose.prod.yml down -v
+          docker logout
