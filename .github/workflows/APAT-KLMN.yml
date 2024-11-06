@@ -1,0 +1,115 @@
+name: KLMN CI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: 
+          # Use GitHub Secrets for Azure credentials
+
+      - name: Execute Azure CLI Script
+        run: |
+          # Azure CLI commands as in Bamboo
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          # Remaining Azure CLI script...
+
+      - name: Setup AWS CLI
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: 
+          aws-secret-access-key: 
+          region: us-east-1
+          # Use GitHub Secrets for AWS credentials
+
+      - name: Execute AWS CLI Script
+        run: |
+          # AWS CLI commands as in Bamboo
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+          # Remaining AWS CLI script...
+
+      - name: Setup Google Cloud CLI
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: 
+          # Use GitHub Secrets for GCP credentials
+
+      - name: Execute Google Cloud CLI Script
+        run: |
+          # Google Cloud CLI commands as in Bamboo
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          # Remaining Google Cloud CLI script...
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}" \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+                --header 'Content-Type: application/json' \
+                --data "{ \n                  \"event_type\": \"build_status\",\n                  \"client_payload\": {\n                    \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.run_id }}\",\n                    \"context\": \"KLMN\",\n                    \"commit_id\": \"${{ github.sha }}\",\n                    \"build_status\": \"InProgress\",\n                    \"build_plan_key\": \"APAT-KLMN\",\n                    \"build_number\": \"${{ github.run_number }}\",\n                    \"git_url\": \"${{ github.event.repository.clone_url }}\"\n                  }\n                }"
+
+  docker-arti:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+
+      - name: Save Docker Image
+        run: |
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+
+      - name: Upload Docker Artifact
+        uses: actions/upload-artifact@v4.1.0
+        with:
+          name: docker-image-artifact
+          path: $IMAGE_TAR
+
+  docker-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.0
+
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Images
+        run: |
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/${{ secrets.DOCKER_USERNAME }}"
+          TAG=$(date +%Y%m%d%H%M)
+          docker build -t $IMAGE_NAME:$TAG .
+          docker tag $IMAGE_NAME:$TAG $REGISTRY_URL/$IMAGE_NAME:$TAG
+          docker push $REGISTRY_URL/$IMAGE_NAME:$TAG
+
+      - name: Docker Compose Operations
+        run: |
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps
+          docker-compose -f docker-compose.prod.yml down -v
+
