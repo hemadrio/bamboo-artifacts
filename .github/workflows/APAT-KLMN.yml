@@ -1,0 +1,252 @@
+name: KLMN Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script
+        env:
+          AZURE_CLIENT_ID: 
+          AZURE_CLIENT_SECRET: 
+          AZURE_TENANT_ID: 
+        run: |
+          #!/bin/bash
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          SUBNET_NAME="testSubnet"
+          ADDRESS_PREFIX="10.1.0.0/16"
+          SUBNET_PREFIX="10.1.0.0/24"
+          VM_NAME="testVM"
+          VM_SIZE="Standard_B1s"
+          ADMIN_USERNAME="azureuser"
+          ADMIN_PASSWORD="ComplexPassword123!"
+
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+
+          echo "Setting subscription to $AZURE_SUBSCRIPTION_ID..."
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+
+          echo "Creating resource group $RESOURCE_GROUP in $LOCATION..."
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+
+          echo "Creating storage account $STORAGE_ACCOUNT_NAME in resource group $RESOURCE_GROUP..."
+          az storage account create --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --location $LOCATION --sku Standard_LRS --enable-hierarchical-namespace true --allow-blob-public-access false --kind StorageV2
+
+          echo "Creating container $CONTAINER_NAME in storage account $STORAGE_ACCOUNT_NAME..."
+          STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" -o tsv)
+          az storage container create --name $CONTAINER_NAME --account-name $STORAGE_ACCOUNT_NAME --account-key $STORAGE_KEY
+
+          echo "Creating virtual network $VNET_NAME and subnet $SUBNET_NAME..."
+          az network vnet create --resource-group $RESOURCE_GROUP --name $VNET_NAME --address-prefix $ADDRESS_PREFIX --subnet-name $SUBNET_NAME --subnet-prefix $SUBNET_PREFIX
+
+          echo "Creating virtual machine $VM_NAME in $RESOURCE_GROUP..."
+          az vm create --resource-group $RESOURCE_GROUP --name $VM_NAME --image UbuntuLTS --size $VM_SIZE --admin-username $ADMIN_USERNAME --admin-password $ADMIN_PASSWORD --vnet-name $VNET_NAME --subnet $SUBNET_NAME --generate-ssh-keys
+
+          echo "Configuring network security group rules for SSH access..."
+          NSG_NAME="${VM_NAME}NSG"
+          az network nsg rule create --resource-group $RESOURCE_GROUP --nsg-name $NSG_NAME --name SSHAllowRule --priority 1001 --protocol Tcp --destination-port-range 22 --access Allow
+
+          echo "Assigning Contributor role to the storage account..."
+          STORAGE_ACCOUNT_ID=$(az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --query "id" -o tsv)
+          az role assignment create --assignee $AZURE_CLIENT_ID --role "Storage Blob Data Contributor" --scope $STORAGE_ACCOUNT_ID
+
+          echo "Resources created successfully."
+
+      - name: AWS CLI Script
+        env:
+          AWS_PROFILE: test-profile
+        run: |
+          AWS_REGION="us-east-1"
+          RESOURCE_TAG="BambooTestResource"
+          VPC_NAME="TestVPC"
+          SUBNET_NAME="TestSubnet"
+          SECURITY_GROUP_NAME="TestSecurityGroup"
+          INSTANCE_TYPE="t2.micro"
+          KEY_NAME="TestKeyPair"
+          S3_BUCKET_NAME="test-bamboo-s3-bucket-$RANDOM"
+
+          echo "Configuring AWS CLI with profile $AWS_PROFILE and region $AWS_REGION..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+
+          echo "Creating an S3 bucket: $S3_BUCKET_NAME..."
+          aws s3api create-bucket --bucket $S3_BUCKET_NAME --region $AWS_REGION --create-bucket-configuration LocationConstraint=$AWS_REGION
+          aws s3api put-public-access-block --bucket $S3_BUCKET_NAME --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+          echo "Creating a new VPC: $VPC_NAME..."
+          VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query 'Vpc.VpcId' --output text --profile $AWS_PROFILE)
+          aws ec2 create-tags --resources $VPC_ID --tags Key=Name,Value=$VPC_NAME --profile $AWS_PROFILE
+
+          echo "Creating a subnet: $SUBNET_NAME..."
+          SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24 --query 'Subnet.SubnetId' --output text --profile $AWS_PROFILE)
+
+          echo "Creating a security group: $SECURITY_GROUP_NAME..."
+          SECURITY_GROUP_ID=$(aws ec2 create-security-group --group-name $SECURITY_GROUP_NAME --description "Security group for SSH access" --vpc-id $VPC_ID --query 'GroupId' --output text --profile $AWS_PROFILE)
+          aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --profile $AWS_PROFILE
+
+          echo "Launching an EC2 instance with security group and subnet..."
+          aws ec2 run-instances --image-id ami-1234567890abcdef0 --instance-type $INSTANCE_TYPE --key-name $KEY_NAME --security-group-ids $SECURITY_GROUP_ID --subnet-id $SUBNET_ID --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$RESOURCE_TAG}]" --profile $AWS_PROFILE
+
+          echo "Resources created successfully:"
+          echo "S3 Bucket: $S3_BUCKET_NAME"
+          echo "VPC ID: $VPC_ID"
+          echo "Subnet ID: $SUBNET_ID"
+          echo "Security Group ID: $SECURITY_GROUP_ID"
+
+      - name: GCP CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: 
+        run: |
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          NETWORK_NAME="test-network"
+          SUBNET_NAME="test-subnet"
+          VM_NAME="test-vm"
+          MACHINE_TYPE="n1-standard-1"
+          BUCKET_NAME="test-bamboo-bucket-$RANDOM"
+
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+
+          echo "Setting Google Cloud project to $PROJECT_ID..."
+          gcloud config set project $PROJECT_ID
+
+          echo "Creating a Cloud Storage bucket: $BUCKET_NAME..."
+          gcloud storage buckets create gs://$BUCKET_NAME --project $PROJECT_ID --location $ZONE --uniform-bucket-level-access
+
+          echo "Creating a VPC network: $NETWORK_NAME..."
+          gcloud compute networks create $NETWORK_NAME --subnet-mode=custom
+
+          echo "Creating a subnet: $SUBNET_NAME..."
+          gcloud compute networks subnets create $SUBNET_NAME --network=$NETWORK_NAME --range=10.0.1.0/24 --region=$ZONE
+
+          echo "Creating a firewall rule for SSH access..."
+          gcloud compute firewall-rules create allow-ssh --network $NETWORK_NAME --allow tcp:22
+
+          echo "Creating a Compute Engine VM instance: $VM_NAME..."
+          gcloud compute instances create $VM_NAME --zone=$ZONE --machine-type=$MACHINE_TYPE --subnet=$SUBNET_NAME --tags=http-server,https-server --metadata=startup-script='#!/bin/bash
+          echo "Hello, World!" > /var/www/html/index.html' --image-family=debian-10 --image-project=debian-cloud
+
+          echo "Resources created successfully:"
+          echo "Cloud Storage Bucket: gs://$BUCKET_NAME"
+          echo "VPC Network: $NETWORK_NAME"
+          echo "Subnet: $SUBNET_NAME"
+          echo "Compute Engine VM: $VM_NAME"
+
+  docker-arti:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+
+      - name: Upload Docker Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: my-complex-image-latest.tar
+          if-no-files-found: error
+
+      - name: Download Docker Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-artifact
+
+      - name: Load and Run Docker Container
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+
+          echo "Loading Docker image from artifact..."
+          docker load -i $IMAGE_TAR
+
+          echo "Running Docker container from loaded image..."
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+
+      - name: JUnit Report
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/test-reports/*.xml'
+          check_name: Junit-case
+
+  docker-shell:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker Shell Operations
+        run: |
+          DOCKER_USERNAME="your_docker_username"
+          DOCKER_PASSWORD="your_docker_password"
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+
+          echo "Logging into Docker Hub..."
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+
+          echo "Building Docker image with multi-stage builds and caching..."
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$CACHE_IMAGE" --build-arg CACHEBUST=$(date +%s)
+
+          echo "Running tests on Docker image..."
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+
+          echo "Finalizing production build..."
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" --cache-from "$CACHE_IMAGE" .
+
+          echo "Tagging and pushing images..."
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+
+          echo "Cleaning up old Docker images..."
+          docker image prune -f
+          docker rmi "$(docker images -f "dangling=true" -q)"
+
+          echo "Starting multi-container environment using Docker Compose..."
+          docker-compose -f docker-compose.prod.yml up -d --build
+
+          echo "Checking container status..."
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+
+          echo "Extracting logs for analysis..."
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+
+          echo "Shutting down the environment..."
+          docker-compose -f docker-compose.prod.yml down -v
+
+          echo "Logging out from Docker Hub..."
+          docker logout
+
