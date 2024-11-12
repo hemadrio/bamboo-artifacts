@@ -1,0 +1,109 @@
+name: KLMN CI Pipeline
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          creds: 
+          AZURE_CLIENT_ID: 
+          AZURE_CLIENT_SECRET: 
+          AZURE_TENANT_ID: 
+
+      - name: Azure CLI Script Execution
+        run: |
+          #!/bin/bash
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          SUBNET_NAME="testSubnet"
+          ADDRESS_PREFIX="10.1.0.0/16"
+          SUBNET_PREFIX="10.1.0.0/24"
+          VM_NAME="testVM"
+          VM_SIZE="Standard_B1s"
+          ADMIN_USERNAME="azureuser"
+          ADMIN_PASSWORD="ComplexPassword123!"
+
+          echo "Logging into Azure..."
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+
+          echo "Creating resource group $RESOURCE_GROUP in $LOCATION..."
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          # ... (rest of Azure CLI commands)
+
+      - name: AWS CLI Configuration
+        run: |
+          #!/bin/bash
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+          RESOURCE_TAG="BambooTestResource"
+          S3_BUCKET_NAME="test-bamboo-s3-bucket-$RANDOM"
+          # AWS CLI commands
+
+      - name: GCP CLI Configuration
+        run: |
+          #!/bin/bash
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          # GCP CLI commands
+
+  docker-operations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with:
+          username: 
+          password: 
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG=$(date +%Y%m%d%H%M)
+          docker build -t $IMAGE_NAME:$TAG .
+          docker push $IMAGE_NAME:$TAG
+
+      - name: Run Docker Compose
+        run: |
+          docker-compose -f docker-compose.prod.yml up -d --build
+
+      - name: Docker Cleanup
+        run: |
+          docker image prune -f
+
+      - name: Logout from Docker
+        run: |
+          docker logout
+
+  update-build-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+                --header 'Content-Type: application/json' \
+                --data "{ ... }"
+
