@@ -1,0 +1,146 @@
+name: Bamboo to GitHub Actions Conversion
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: 
+          # Add credential secrets in GitHub Secrets and reference them here
+
+      - name: Azure CLI - Execute Script
+        run: |
+          #!/bin/bash
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          # Define other variables here or retrieve them from GitHub Secrets
+
+          echo "Logging into Azure..."
+          az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+
+          # Execute Azure CLI commands as in Bamboo script
+
+      - name: AWS CLI - Execute Script
+        run: |
+          #!/bin/bash
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+          # Define other variables here or retrieve them from GitHub Secrets
+
+          echo "Configuring AWS CLI with profile $AWS_PROFILE and region $AWS_REGION..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+
+          # Execute AWS CLI commands as in Bamboo script
+
+      - name: GCP CLI - Execute Script
+        run: |
+          #!/bin/bash
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          # Define other variables here or retrieve them from GitHub Secrets
+
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+
+          # Execute Google Cloud CLI commands as in Bamboo script
+
+  update-build-status:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data "{
+                \"event_type\": \"build_status\",
+                \"client_payload\": {
+                  \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.repository.name }}-${{ github.run_number }}\",
+                  \"context\": \"${{ github.event.repository.name }}\",
+                  \"commit_id\": \"${{ github.sha }}\",
+                  \"build_status\": \"InProgress\",
+                  \"build_plan_key\": \"${{ github.event.repository.name }}\",
+                  \"build_number\": \"${{ github.run_number }}\",
+                  \"git_url\": \"${{ github.event.repository.clone_url }}\"
+                }
+              }"
+
+  docker-operations:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG=$(date +%Y%m%d%H%M)
+          REGISTRY_URL="docker.io/${{ secrets.DOCKER_USERNAME }}"
+
+          echo "Building Docker image..."
+          docker build -t $IMAGE_NAME:$TAG .
+          docker tag $IMAGE_NAME:$TAG $REGISTRY_URL/$IMAGE_NAME:$TAG
+          docker push $REGISTRY_URL/$IMAGE_NAME:$TAG
+
+      - name: Run Docker Compose
+        run: |
+          echo "Starting multi-container environment using Docker Compose..."
+          docker-compose -f docker-compose.prod.yml up -d --build
+
+      - name: Extract Logs
+        run: |
+          echo "Extracting logs for analysis..."
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+
+      - name: Teardown Environment
+        run: |
+          echo "Shutting down the environment..."
+          docker-compose -f docker-compose.prod.yml down -v
+
+      - name: Logout from Docker Hub
+        run: |
+          echo "Logging out from Docker Hub..."
+          docker logout
+
+  publish-results:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/test-reports/*.xml'
+
+      - name: Generate Coverage Report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5
+        with:
+          reports: '**/coverage.xml'
+          targetdir: 'coverage-report'
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: target/*.*
+          if-no-files-found: error
