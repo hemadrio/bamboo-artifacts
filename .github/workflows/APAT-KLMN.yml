@@ -1,0 +1,319 @@
+---
+name: KLMN
+on:
+  push:
+    branches:
+      - main  # Replace with your actual branch name
+jobs:
+  Build-Test-and-Publish-Sonar-and-Code-Coverage-Report:
+    runs-on: ubuntu-custom-runner
+    env:
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}  # Stored in GitHub Secrets
+      RESOURCE_GROUP: "testResourceGroup"
+      LOCATION: "eastus"
+      STORAGE_ACCOUNT_NAME: "teststorageaccount$RANDOM"  # Consider using a unique identifier instead of random suffix
+      CONTAINER_NAME: "testcontainer"
+      VNET_NAME: "testVnet"
+      SUBNET_NAME: "testSubnet"
+      ADDRESS_PREFIX: "10.1.0.0/16"
+      SUBNET_PREFIX: "10.1.0.0/24"
+      VM_NAME: "testVM"
+      VM_SIZE: "Standard_B1s"
+      ADMIN_USERNAME: "azureuser"
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}  # Stored in GitHub Secrets
+      AWS_REGION: "us-east-1"
+      AWS_PROFILE: "test-profile"  # Assumes AWS CLI profile is set up
+      RESOURCE_TAG: "BambooTestResource"
+      VPC_NAME: "TestVPC"
+      SECURITY_GROUP_NAME: "TestSecurityGroup"
+      INSTANCE_TYPE: "t2.micro"
+      KEY_NAME: "TestKeyPair"
+      S3_BUCKET_NAME: "test-bamboo-s3-bucket-$RANDOM"  # Consider using a unique identifier instead of random suffix
+      PROJECT_ID: "test-project"
+      ZONE: "us-central1-a"
+      NETWORK_NAME: "test-network"
+      VM_NAME: "test-vm"
+      MACHINE_TYPE: "n1-standard-1"
+      BUCKET_NAME: "test-bamboo-bucket-$RANDOM"  # Consider using a unique identifier instead of random suffix
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}  # Stored in GitHub Secrets
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}  # Stored in GitHub Secrets
+      IMAGE_NAME: "my-complex-image"
+      REGISTRY_URL: "docker.io/${{ secrets.DOCKER_USERNAME }}"
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Azure CLI Script
+        run: |
+          # Azure CLI Script for Bamboo Plan - Advanced Configuration
+          # Note: Environment variables are defined at the job level.
+          # Login to Azure
+          echo "Logging into Azure..."
+          az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+          # ... (Rest of the Azure script)
+      - name: AWS CLI Script
+        run: |
+          #!/bin/bash
+          # AWS CLI Script for Bamboo Plan - Advanced Configuration
+          # Note: Environment variables are defined at the job level.
+          # Configure AWS CLI
+          echo "Configuring AWS CLI with profile $AWS_PROFILE and region $AWS_REGION..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # ... (Rest of the AWS script)
+      - name: Google Cloud CLI Script
+        run: |
+          #!/bin/bash
+          # Google Cloud CLI Script for Bamboo Plan - Advanced Configuration
+          # Note: Environment variables are defined at the job level.
+          # Authenticate with Google Cloud
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}"
+          # ... (Rest of the Google Cloud script)
+      - name: Build Docker Image and Save as Artifact
+        run: |
+          #!/bin/bash
+          # Bamboo job: Build Docker Image and Save as Artifact
+          # Environment variables are defined at the job level
+          # Step 1: Build the Docker image
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+          # Step 2: Save the Docker image to a tar file
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          # Step 3: Verify image saved correctly
+          if [ -f "$IMAGE_TAR" ]; then
+            echo "Docker image saved successfully: $IMAGE_TAR"
+          else
+            echo "Error: Failed to save Docker image."
+            exit 1
+          fi
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: ${{ env.IMAGE_TAR }}
+          if-no-files-found: error
+      - name: Download and Use Docker Image Artifact
+        run: |
+          #!/bin/bash
+          # Bamboo job: Download and Use Docker Image Artifact
+          # Define variables
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          # Step 1: Download the Docker image artifact
+          echo "Downloading Docker image artifact..."
+          # Use actions/download-artifact to fetch the artifact
+          # Step 2: Load the Docker image
+          echo "Loading Docker image from artifact..."
+          docker load -i $IMAGE_TAR
+          # Step 3: Run the Docker container
+          echo "Running Docker container from loaded image..."
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+          # Optional: Verify container is running
+          echo "Verifying container status..."
+          docker ps -f "name=$IMAGE_NAME-container"
+      - name: Run JUnit Tests
+        # Replace with your actual test runner command
+        run: echo "Running JUnit tests..."
+      - name: Publish JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: "**/test-reports/*.xml"
+      - name: Generate Test Report
+        uses: danielpalme/ReportGenerator-GitHub-Action@v5
+        with:
+          reports: "**/test-reports/*.xml"
+          targetdir: "test-results/report"
+      - name: Upload Test Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/report
+          if-no-files-found: warn
+      - name: Maven Build
+        run: |
+          echo "Starting build process..."
+          mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory
+      - name: Upload Artifact 'artifact-option'
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  Update-build-status:
+    runs-on: ubuntu-custom-runner
+    needs: Build-Test-and-Publish-Sonar-and-Code-Coverage-Report
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.bamboo_g_bamboo_github_webhook_url }}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: ${{ secrets.bamboo_g_svc_bot_ws1_github_token_secret }}' \
+            --header 'Content-Type: application/json' \
+            --data "{
+              \"event_type\": \"build_status\",
+              \"client_payload\": {
+                \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.repository.full_name }}/${{ github.run_id }}\",
+                \"context\": \"${{ github.workflow }}\",
+                \"commit_id\": \"${{ github.sha }}\",
+                \"build_status\": \"InProgress\",
+                \"build_plan_key\": \"${{ github.workflow }}\",
+                \"build_number\": \"${{ github.run_number }}\",
+                \"git_url\": \"${{ github.event.repository.html_url }}\"
+              }
+            }"
+  Docker-arti:
+    runs-on: ubuntu-custom-runner
+    needs: Update-build-status
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          #!/bin/bash
+          # Bamboo job: Build Docker Image and Save as Artifact
+          # Environment variables are defined at the job level
+          # Step 1: Build the Docker image
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+          # Step 2: Save the Docker image to a tar file
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          # Step 3: Verify image saved correctly
+          if [ -f "$IMAGE_TAR" ]; then
+            echo "Docker image saved successfully: $IMAGE_TAR"
+          else
+            echo "Error: Failed to save Docker image."
+            exit 1
+          fi
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: ${{ env.IMAGE_TAR }}
+          if-no-files-found: error
+      - name: Download and Use Docker Image Artifact
+        run: |
+          #!/bin/bash
+          # Bamboo job: Download and Use Docker Image Artifact
+          # Define variables
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          # Step 1: Download the Docker image artifact
+          echo "Downloading Docker image artifact..."
+          # Use actions/download-artifact to fetch the artifact
+          # Step 2: Load the Docker image
+          echo "Loading Docker image from artifact..."
+          docker load -i $IMAGE_TAR
+          # Step 3: Run the Docker container
+          echo "Running Docker container from loaded image..."
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+          # Optional: Verify container is running
+          echo "Verifying container status..."
+          docker ps -f "name=$IMAGE_NAME-container"
+      - name: Run JUnit Tests
+        # Replace with your actual test runner command
+        run: echo "Running JUnit tests..."
+      - name: Publish JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: "**/test-reports/*.xml"
+      - name: Generate Test Report
+        uses: danielpalme/ReportGenerator-GitHub-Action@v5
+        with:
+          reports: "**/test-reports/*.xml"
+          targetdir: "test-results/report"
+      - name: Upload Test Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/report
+          if-no-files-found: warn
+      - name: Maven Build
+        run: |
+          echo "Starting build process..."
+          mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: |
+            target/*.*
+            IMAGE_TAR/image/arti
+          if-no-files-found: error
+      - name: Download Artifacts from APAT-EFG
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact-option  # Assuming 'artifact-option' is the correct artifact name from APAT-EFG
+          path: /test1/1
+        continue-on-error: true  # Continue even if artifact is not found
+  Docker-shell:
+    runs-on: ubuntu-custom-runner
+    needs: Docker-arti
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build and Push Docker Image
+        run: |
+          #!/bin/bash
+          # Bamboo Complex Docker Operations Script
+          # Note: Environment variables are defined at the job level
+          TAG=$(date +%Y%m%d%H%M)  # Tag using timestamp for versioning
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+          # Build multi-stage Docker image with caching
+          echo "Building Docker image with multi-stage builds and caching..."
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . \
+            --cache-from "$CACHE_IMAGE" \
+            --build-arg CACHEBUST=$(date +%s)  # Optional cache busting
+          # Testing container builds and setup
+          echo "Running tests on Docker image..."
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          # Continue to production build stage
+          echo "Finalizing production build..."
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" \
+            --cache-from "$CACHE_IMAGE" .
+          # Pushing images to Docker Hub
+          echo "Tagging and pushing images..."
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          # Cleanup dangling and old images (optional)
+          echo "Cleaning up old Docker images..."
+          docker image prune -f
+          docker rmi "$(docker images -f \"dangling=true\" -q)"
+          # Multi-container setup and orchestration (Docker Compose example)
+          echo "Starting multi-container environment using Docker Compose..."
+          docker-compose -f docker-compose.prod.yml up -d --build
+          # Verify containers are running correctly
+          echo "Checking container status..."
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          # Log extraction for analysis (optional)
+          echo "Extracting logs for analysis..."
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          # Teardown after testing (optional)
+          echo "Shutting down the environment..."
+          docker-compose -f docker-compose.prod.yml down -v
+          echo "Docker operations completed successfully."
+      - name: Logout from Docker Hub
+        uses: docker/logout-action@v2
+        if: always()
