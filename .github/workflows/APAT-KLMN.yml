@@ -1,0 +1,186 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main  # Replace with your default branch
+jobs:
+  Build-Test-and-Publish-Sonar-and-Code-Coverage-Report:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}  # Use GitHub Secrets
+      RESOURCE_GROUP: "testResourceGroup"
+      LOCATION: "eastus"
+      STORAGE_ACCOUNT_NAME: "teststorageaccount${{ github.run_number }}"  # Using run number for uniqueness
+      CONTAINER_NAME: "testcontainer"
+      VNET_NAME: "testVnet"
+      SUBNET_NAME: "testSubnet"
+      ADDRESS_PREFIX: "10.1.0.0/16"
+      SUBNET_PREFIX: "10.1.0.0/24"
+      VM_NAME: "testVM"
+      VM_SIZE: "Standard_B1s"
+      ADMIN_USERNAME: "azureuser"
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}  # Use GitHub Secrets
+      AWS_REGION: "us-east-1"
+      AWS_PROFILE: "test-profile"  # Consider using AWS credentials instead of profiles
+      RESOURCE_TAG: "BambooTestResource"
+      VPC_NAME: "TestVPC"
+      SUBNET_NAME: "TestSubnet"
+      SECURITY_GROUP_NAME: "TestSecurityGroup"
+      INSTANCE_TYPE: "t2.micro"
+      KEY_NAME: "TestKeyPair"
+      S3_BUCKET_NAME: "test-bamboo-s3-bucket-${{ github.run_number }}"  # Using run number for uniqueness
+      PROJECT_ID: "test-project"
+      ZONE: "us-central1-a"
+      NETWORK_NAME: "test-network"
+      SUBNET_NAME: "test-subnet"
+      VM_NAME: "test-vm"
+      MACHINE_TYPE: "n1-standard-1"
+      BUCKET_NAME: "test-bamboo-bucket-${{ github.run_number }}"  # Using run number for uniqueness
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}  # Use GitHub Secrets
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}  # Use GitHub Secrets
+      IMAGE_NAME: "my-complex-image"
+      REGISTRY_URL: "docker.io/${{ secrets.DOCKER_USERNAME }}"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Azure CLI Script
+        uses: azure/cli@v2
+        with:
+          args: >-
+            az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CLIENT_SECRET }} --tenant ${{ secrets.AZURE_TENANT_ID }} &&
+            az account set --subscription ${{ env.AZURE_SUBSCRIPTION_ID }} &&
+            az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }} &&
+            # ... rest of your Azure CLI commands
+      - name: AWS CLI Script
+        uses: aws-actions/configure-aws-credentials@v2  # Using AWS actions for better integration
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}  # Use GitHub Secrets
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}  # Use GitHub Secrets
+          aws-region: ${{ env.AWS_REGION }}
+        # ... your AWS CLI commands (using aws command directly)
+      - name: Google Cloud CLI Script  # Consider using dedicated Google Cloud actions
+        run: |
+          # Your Google Cloud CLI commands here
+          # ...
+      - name: Build and Save Docker Image
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:latest .
+          docker save -o ${{ env.IMAGE_NAME }}-latest.tar ${{ env.IMAGE_NAME }}:latest
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-latest.tar
+          path: ${{ env.IMAGE_NAME }}-latest.tar
+  Update-build-status:
+    runs-on: ubuntu-latest
+    needs: Build-Test-and-Publish-Sonar-and-Code-Coverage-Report
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.g_bamboo_github_webhook_url }}" \
+                  --header 'Accept: application/vnd.github+json' \
+                  --header 'x-github-token: ${{ secrets.g_svc_bot_ws1_github_token_secret }}' \
+                  --header 'Content-Type: application/json' \
+                  --data "{
+                    \"event_type\": \"build_status\"
+                  }"
+        # Note: This assumes the webhook URL and token are stored in GitHub Secrets.
+        #       Adjust the payload data as needed to match the expected format of your webhook.
+  Docker-arti:
+    runs-on: ubuntu-latest
+    needs: Update-build-status
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:latest .
+          docker save -o ${{ env.IMAGE_NAME }}-latest.tar ${{ env.IMAGE_NAME }}:latest
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-latest.tar
+          path: ${{ env.IMAGE_NAME }}-latest.tar
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-latest.tar
+          path: IMAGE_TAR/image/arti
+      - name: Load and Run Docker Image
+        run: |
+          docker load -i ${{ env.IMAGE_NAME }}-latest.tar
+          docker run -d --name "${{ env.IMAGE_NAME }}-container" ${{ env.IMAGE_NAME }}:latest
+      - name: Run Tests
+        run: |
+          # Replace with your actual test command
+          echo "Running tests..."
+          # Example: npm test
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()  # Always run even if previous steps fail
+        with:
+          # Replace with your actual test result files
+          files: target/surefire-reports/*.xml
+      - name: Maven Build
+        run: |
+          echo "Starting build process..."
+          mvn clean install
+        env:
+          JAVA_OPTS: -Xmx256m -Xms128m
+      - name: Upload Artifact (Optional)
+        uses: actions/upload-artifact@v4
+        if: ${{ env.testvar != null }}  # Check if the variable exists
+        with:
+          name: artifact-option
+          path: target/*.*
+  Docker-shell:
+    runs-on: ubuntu-latest
+    needs: Docker-arti
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build and Push Docker Image
+        run: |
+          docker pull ${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:cache || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t ${{ env.IMAGE_NAME }}:builder .
+            --cache-from ${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:cache \
+            --build-arg CACHEBUST=$(date +%s)
+          docker run --rm ${{ env.IMAGE_NAME }}:builder ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          docker build --target final -t ${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.IMAGE_NAME }}:latest \
+            --cache-from ${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:cache .
+          docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker tag ${{ env.IMAGE_NAME }}:latest ${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest
+          docker image prune -f
+          docker rmi $(docker images -f "dangling=true" -q)
+      # Multi-container setup and orchestration (Docker Compose example)
+      # This part requires further clarification on how it's used in your Bamboo setup
+      - name: Start Multi-Container Environment
+        run: |
+          echo "Starting multi-container environment using Docker Compose..."
+          docker-compose -f docker-compose.prod.yml up -d --build
+      - name: Check Container Status
+        run: |
+          echo "Checking container status..."
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+      - name: Extract Logs
+        run: |
+          echo "Extracting logs for analysis..."
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+      - name: Shut Down Environment
+        run: |
+          echo "Shutting down the environment..."
+          docker-compose -f docker-compose.prod.yml down -v
+      - name: Logout from Docker Hub
+        uses: docker/logout-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
