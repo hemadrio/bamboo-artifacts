@@ -1,0 +1,137 @@
+name: KLMN CI
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script Execution
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - run: |
+          # Azure CLI Script
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+
+          echo "Creating resource group $RESOURCE_GROUP in $LOCATION..."
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+
+          # More Azure CLI commands...
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: AWS CLI Script Execution
+        run: |
+          # AWS CLI Script
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+
+          echo "Configuring AWS CLI..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+
+          # More AWS CLI commands...
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: GCP CLI Script Execution
+        run: |
+          # GCP CLI Script
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+
+          echo "Authenticating with GCP..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+
+          # More GCP CLI commands...
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data "{...}"
+
+  docker-arti:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and Save Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+          docker save -o $IMAGE_NAME-$TAG.tar $IMAGE_NAME:$TAG
+
+      - name: Upload Docker Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: $IMAGE_NAME-$TAG.tar
+          if-no-files-found: error
+
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          name: docker-image
+
+      - name: Load and Run Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker load -i $IMAGE_NAME-$TAG.tar
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/test-reports/*.xml'
+
+      - name: Maven Command
+        run: |
+          JAVA_OPTS="-Xmx256m -Xms128m"
+          check echo "Starting build process..."
+          mvn clean install
+        shell: bash
+
+  docker-shell:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker Operations
+        run: |
+          DOCKER_USERNAME="your_docker_username"
+          DOCKER_PASSWORD="your_docker_password"
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)
+
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker build --target builder -t "$IMAGE_NAME:builder" .
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" .
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml down -v
+          docker logout
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
