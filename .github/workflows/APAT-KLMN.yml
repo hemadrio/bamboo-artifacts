@@ -1,0 +1,121 @@
+name: KLMN
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - "*"
+
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Azure CLI Script
+        run: |
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          # Add further Azure CLI commands as per your script
+
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: test-profile
+        run: |
+          # Add AWS CLI commands as per your script
+
+      - name: Google Cloud CLI Script
+        env:
+          PROJECT_ID: test-project
+        run: |
+          # Add Google Cloud CLI commands as per your script
+
+      - name: Update Build Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -v POST "${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}" \
+          --header 'Accept: application/vnd.github+json' \
+          --header 'x-github-token: ${{ secrets.BAMBOO_GITHUB_TOKEN }}' \
+          --data "{
+            \"event_type\": \"build_status\", 
+            \"client_payload\": { 
+              \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.run_id }}\", 
+              \"context\": \"KLMN\", 
+              \"commit_id\": \"${{ github.sha }}\", 
+              \"build_status\": \"InProgress\", 
+              \"build_plan_key\": \"KLMN\", 
+              \"build_number\": \"${{ github.run_number }}\", 
+              \"git_url\": \"${{ github.repository_url }}\"
+            }
+          }"
+
+  docker_artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+
+      - name: Save Docker Image as Artifact
+        run: |
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          echo "Artifact path: $IMAGE_TAR"
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: $IMAGE_TAR
+
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-artifact
+
+      - name: Load and Run Docker Image
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name "my-complex-image-container" my-complex-image:latest
+
+  docker_shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/${{ secrets.DOCKER_USERNAME }}"
+          TAG=$(date +%Y%m%d%H%M)
+          docker build -t $IMAGE_NAME:$TAG .
+          docker tag $IMAGE_NAME:$TAG $REGISTRY_URL/$IMAGE_NAME:$TAG
+          docker push $REGISTRY_URL/$IMAGE_NAME:$TAG
+
+      - name: Logout from Docker Hub
+        run: |
+          docker logout
