@@ -1,0 +1,97 @@
+name: Bamboo Plan Conversion
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Azure CLI Script Execution
+        run: |
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          # Other environment variables
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          # Rest of the Azure CLI script
+
+      - name: AWS CLI Script Execution
+        run: |
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+          # Other environment variables
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # Rest of the AWS CLI script
+
+      - name: Google Cloud CLI Script Execution
+        run: |
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          # Other environment variables
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          gcloud config set project $PROJECT_ID
+          # Rest of the Google Cloud CLI script
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data "{\n                \"event_type\": \"build_status\",\n                \"client_payload\": {\n                  \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.workflow }}-${{ github.run_number }}\",\n                  \"context\": \"${{ github.workflow }}\",\n                  \"commit_id\": \"${{ github.sha }}\",\n                  \"build_status\": \"InProgress\",\n                  \"build_plan_key\": \"${{ github.workflow }}\",\n                  \"build_number\": \"${{ github.run_number }}\",\n                  \"git_url\": \"${{ github.repository_url }}\"\n                }\n              }"
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+
+      - name: Save Docker Image as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Docker Image
+          path: my-complex-image-latest.tar
+
+      - name: Load Docker Image from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Docker Image
+
+      - name: Run Docker Container
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name "${IMAGE_NAME}-container" $IMAGE_NAME:$TAG
+
+      - name: Multi-Stage Docker Operations
+        run: |
+          DOCKER_USERNAME="your_docker_username"
+          DOCKER_PASSWORD="your_docker_password"
+          IMAGE_NAME="my-complex-image"
+          TAG=$(date +%Y%m%d%H%M)
+          docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+          docker build --target builder -t "$IMAGE_NAME:builder" .
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" .
+          docker push "$IMAGE_NAME:$TAG"
+          docker push "$IMAGE_NAME:latest"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/test-reports/*.xml'
+
