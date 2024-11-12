@@ -1,0 +1,124 @@
+name: KLMN CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Setup
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Azure Script Execution
+        run: |
+          #!/bin/bash
+          # Azure CLI Script
+          AZURE_SUBSCRIPTION_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          # Remaining script follows...
+
+      - name: AWS CLI Setup
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: AWS Script Execution
+        run: |
+          #!/bin/bash
+          # AWS CLI Script
+          AWS_PROFILE="test-profile"
+          # Remaining script follows...
+
+      - name: Google Cloud Setup
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Google Cloud Script Execution
+        run: |
+          #!/bin/bash
+          # Google Cloud CLI Script
+          PROJECT_ID="test-project"
+          # Remaining script follows...
+
+  update_build_status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Update Build Status
+        run: |
+          #!/bin/bash
+          # Update Build Status Script
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data '{...}'
+
+  docker_artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          #!/bin/bash
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+
+      - name: Save Docker Image as Artifact
+        run: |
+          #!/bin/bash
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: $IMAGE_TAR
+
+  docker_shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Docker Operations
+        run: |
+          #!/bin/bash
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/${{ secrets.DOCKER_USERNAME }}"
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$CACHE_IMAGE"
+
+          # Additional Docker operations...
+
+      - name: Docker Logout
+        run: docker logout
