@@ -1,0 +1,104 @@
+name: KLMN
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          #!/bin/bash
+          # Azure CLI Script
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          echo "Setting subscription to $AZURE_SUBSCRIPTION_ID..."
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          # ... (rest of the Azure CLI script)
+
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: ${{ secrets.AWS_PROFILE }}
+        run: |
+          #!/bin/bash
+          # AWS CLI Script
+          echo "Configuring AWS CLI..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # ... (rest of the AWS CLI script)
+
+      - name: GCP CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          #!/bin/bash
+          # GCP CLI Script
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          # ... (rest of the GCP CLI script)
+
+      - name: Update Build Status
+        env:
+          GITHUB_WEBHOOK_URL: ${{ secrets.GITHUB_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -v POST "$GITHUB_WEBHOOK_URL" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: $GITHUB_TOKEN' \
+              --header 'Content-Type: application/json' \
+              --data "{...}"
+
+  docker-arti:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build and Save Docker Image
+        run: |
+          #!/bin/bash
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: $IMAGE_TAR
+          if-no-files-found: error
+
+  docker-shell:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Docker Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          #!/bin/bash
+          echo "Logging into Docker Hub..."
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          # ... (rest of the Docker operations script)
+
