@@ -1,0 +1,111 @@
+name: KLMN Workflow
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script Execution
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Run Azure CLI Commands
+        run: |
+          # Azure CLI Script
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          # Further Azure CLI commands...
+
+      - name: AWS CLI Script Execution
+        env:
+          AWS_REGION: 'us-east-1'
+          AWS_PROFILE: 'test-profile'
+        run: |
+          # AWS CLI Script
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # Further AWS CLI commands...
+
+      - name: GCP CLI Script Execution
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          # Google Cloud CLI Script
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          # Further GCP CLI commands...
+
+  update-build-status:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data '{ "event_type": "build_status", "client_payload": { "build_result_url": "https://bamboo.example.com/browse/${{ github.run_id }}", "context": "KLMN", "commit_id": "${{ github.sha }}", "build_status": "InProgress", "build_plan_key": "KLMN", "build_number": "${{ github.run_number }}", "git_url": "${{ github.repository }}" }}'
+
+  docker-arti:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build and Save Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+          docker save -o $IMAGE_NAME-$TAG.tar $IMAGE_NAME:$TAG
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: $IMAGE_NAME-$TAG.tar
+          if-no-files-found: error
+
+  docker-shell:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Docker Operations
+        run: |
+          DOCKER_USERNAME="your_docker_username"
+          DOCKER_PASSWORD="your_docker_password"
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$CACHE_IMAGE"
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" --cache-from "$CACHE_IMAGE" .
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker image prune -f
+          docker rmi $(docker images -f "dangling=true" -q)
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          docker-compose -f docker-compose.prod.yml down -v
+          docker logout
