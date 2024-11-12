@@ -1,0 +1,17 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script
+        uses: azure/login@v2
+        with:
+          creds: \
