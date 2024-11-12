@@ -1,0 +1,250 @@
+name: KLMN
+description: KLMN
+on:
+  push:
+    branches:
+      - main # Replace with your actual branch name
+trigger:
+  schedule:
+    - cron: '0 */3 * * *' # Adjust the schedule as needed
+jobs:
+  Build-Test-and-Publish-Sonar-and-Code-Coverage-Report:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_SUBSCRIPTION_ID: $"{{ secrets.AZURE_SUBSCRIPTION_ID }}"
+      RESOURCE_GROUP: "testResourceGroup"
+      LOCATION: "eastus"
+      STORAGE_ACCOUNT_NAME: "teststorageaccount$RANDOM" # Consider using a unique name generator
+      CONTAINER_NAME: "testcontainer"
+      VNET_NAME: "testVnet"
+      SUBNET_NAME: "testSubnet"
+      ADDRESS_PREFIX: "10.1.0.0/16"
+      SUBNET_PREFIX: "10.1.0.0/24"
+      VM_NAME: "testVM"
+      VM_SIZE: "Standard_B1s"
+      ADMIN_USERNAME: "azureuser"
+      ADMIN_PASSWORD: $"{{ secrets.ADMIN_PASSWORD }}" # Store this password securely
+      AWS_REGION: "us-east-1"
+      AWS_PROFILE: $"{{ secrets.AWS_PROFILE }}" # Store AWS credentials securely
+      RESOURCE_TAG: "BambooTestResource"
+      VPC_NAME: "TestVPC"
+      SUBNET_NAME: "TestSubnet"
+      SECURITY_GROUP_NAME: "TestSecurityGroup"
+      INSTANCE_TYPE: "t2.micro"
+      KEY_NAME: "TestKeyPair"
+      S3_BUCKET_NAME: "test-bamboo-s3-bucket-$RANDOM" # Consider using a unique name generator
+      PROJECT_ID: "test-project"
+      ZONE: "us-central1-a"
+      NETWORK_NAME: "test-network"
+      SUBNET_NAME: "test-subnet"
+      VM_NAME: "test-vm"
+      MACHINE_TYPE: "n1-standard-1"
+      BUCKET_NAME: "test-bamboo-bucket-$RANDOM" # Consider using a unique name generator
+      GOOGLE_APPLICATION_CREDENTIALS: $"{{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}" # Store credentials securely
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Azure CLI Script
+        run: |
+          # Azure CLI Script for Bamboo Plan - Advanced Configuration
+          # ... (rest of your Azure script)
+      - name: AWS CLI Script
+        run: |
+          # AWS CLI Script for Bamboo Plan - Advanced Configuration
+          # ... (rest of your AWS script)
+      - name: Google Cloud CLI Script
+        run: |
+          # Google Cloud CLI Script for Bamboo Plan - Advanced Configuration
+          # ... (rest of your Google Cloud script)
+  Update-build-status:
+    runs-on: ubuntu-latest
+    needs: Build-Test-and-Publish-Sonar-and-Code-Coverage-Report
+    env:
+      GITHUB_TOKEN: $"{{ secrets.GITHUB_TOKEN }}"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.g_bamboo_github_webhook_url }}" \
+                  --header 'Accept: application/vnd.github+json' \
+                  --header 'x-github-token: ${{ secrets.g_svc_bot_ws1_github_token_secret }}' \
+                  --header 'Content-Type: application/json' \
+                  --data "{
+                    \"event_type\": \"build_status\",
+                    \"client_payload\": {
+                      \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.repository.full_name }}/${{ github.run_id }}\",
+                      \"context\": \"${{ github.workflow }}\",
+                      \"commit_id\": \"${{ github.sha }}\",
+                      \"build_status\": \"InProgress\",
+                      \"build_plan_key\": \"${{ github.workflow }}\",
+                      \"build_number\": \"${{ github.run_number }}\",
+                      \"git_url\": \"${{ github.event.repository.html_url }}\"
+                    }
+                  }"
+  Docker-arti:
+    runs-on: ubuntu-latest
+    needs: Update-build-status
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          #!/bin/bash
+          # Bamboo job: Build Docker Image and Save as Artifact
+          # Environment variables
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          # Step 1: Build the Docker image
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+          # Step 2: Save the Docker image to a tar file
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+          # Step 3: Verify image saved correctly
+          if [ -f "$IMAGE_TAR" ]; then
+              echo "Docker image saved successfully: $IMAGE_TAR"
+          else
+              echo "Error: Failed to save Docker image."
+              exit 1
+          fi
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: ${{ github.workspace }}/$IMAGE_TAR
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: ${{ github.workspace }}/IMAGE_TAR/image/arti
+      - name: Load and Run Docker Image
+        run: |
+          #!/bin/bash
+          # Bamboo job: Download and Use Docker Image Artifact
+          # Define variables
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          # Step 1: Download the Docker image artifact
+          echo "Downloading Docker image artifact..."
+          cp "${{ github.workspace }}/docker-image-artifact/$IMAGE_TAR" .
+          # Step 2: Load the Docker image
+          echo "Loading Docker image from artifact..."
+          docker load -i $IMAGE_TAR
+          # Step 3: Run the Docker container
+          echo "Running Docker container from loaded image..."
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+          # Optional: Verify container is running
+          echo "Verifying container status..."
+          docker ps -f "name=$IMAGE_NAME-container"
+      - name: Run JUnit Tests
+        run:  echo "This step represents running JUnit tests. You'll need to implement your actual test execution here."
+      - name: Publish JUnit Test Results
+        if: always() # Always run even if previous steps fail
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        continue-on-error: true # Proceed even if test results are not found
+        with:
+          files: ${{ github.workspace }}/**/test-reports/*.xml
+      - name: Generate Test Report
+        if: always() # Always run even if previous steps fail
+        uses: danielpalme/ReportGenerator-GitHub-Action@v5
+        continue-on-error: true # Proceed even if test report generation fails
+        with:
+          reports: "${{ github.workspace }}/**/test-reports/*.xml"
+          targetdir: "${{ github.workspace }}/TestResults/Report"
+          reporttypes: "Html;Xml"
+      - name: Upload Test Report Artifact
+        if: always() # Always upload the artifact even if generation fails
+        uses: actions/upload-artifact@v4
+        continue-on-error: true # Allow the workflow to continue even if there are errors
+        with:
+          name: Test-Report
+          path: ${{ github.workspace }}/TestResults/Report
+      - name: Maven Command
+        run: |
+          echo "Starting build process..."
+          mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory # Update with your actual directory
+      - name: Download Artifacts from Another Plan
+        uses: actions/download-artifact@v4
+        if: ${{ needs.Build-Test-and-Publish-Sonar-and-Code-Coverage-Report.outputs.testvar-exists == 'true' }}
+        with:
+          name: artifact-option
+          path: /test1/1
+        continue-on-error: true # Continue even if artifact download fails
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+  Docker-shell:
+    runs-on: ubuntu-latest
+    needs: Docker-arti
+    env:
+      DOCKER_USERNAME: $"{{ secrets.DOCKER_USERNAME }}"
+      DOCKER_PASSWORD: $"{{ secrets.DOCKER_PASSWORD }}"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker Login
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build and Push Docker Image
+        run: |
+          #!/bin/bash
+          # Bamboo Complex Docker Operations Script
+          # Environment Variables (assume sample values)
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/${{ secrets.DOCKER_USERNAME }}"
+          TAG=$(date +%Y%m%d%H%M)  # Tag using timestamp for versioning
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+          # Login to Docker Hub
+          echo "Logging into Docker Hub..."
+          # Build multi-stage Docker image with caching
+          echo "Building Docker image with multi-stage builds and caching..."
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . \
+              --cache-from "$CACHE_IMAGE" \
+              --build-arg CACHEBUST=$(date +%s)  # Optional cache busting
+          # Testing container builds and setup
+          echo "Running tests on Docker image..."
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          # Continue to production build stage
+          echo "Finalizing production build..."
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" \
+              --cache-from "$CACHE_IMAGE" .
+          # Pushing images to Docker Hub
+          echo "Tagging and pushing images..."
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+          # Cleanup dangling and old images (optional)
+          echo "Cleaning up old Docker images..."
+          docker image prune -f
+          docker rmi "$(docker images -f \"dangling=true\" -q)"
+          # Multi-container setup and orchestration (Docker Compose example)
+          echo "Starting multi-container environment using Docker Compose..."
+          docker-compose -f docker-compose.prod.yml up -d --build
+          # Verify containers are running correctly
+          echo "Checking container status..."
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          # Log extraction for analysis (optional)
+          echo "Extracting logs for analysis..."
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          # Teardown after testing (optional)
+          echo "Shutting down the environment..."
+          docker-compose -f docker-compose.prod.yml down -v
+          # Logout from Docker Hub
+          echo "Logging out from Docker Hub..."
+          docker logout
+          echo "Docker operations completed successfully."
+      - name: Docker Logout
+        if: always()
+        uses: docker/logout-action@v2
