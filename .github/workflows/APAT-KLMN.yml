@@ -1,0 +1,99 @@
+name: KLMN
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: 
+            # Recommend storing in GitHub Secrets
+            client-id: 
+            client-secret: 
+            tenant-id: 
+
+      - name: Azure CLI Script
+        run: |
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          # Further Azure CLI commands
+
+      - name: Set up AWS CLI
+        run: |
+          mkdir -p ~/.aws
+          echo "[profile test-profile]" > ~/.aws/config
+          echo "region = us-east-1" >> ~/.aws/config
+          # Further AWS CLI commands
+
+      - name: AWS CLI Script
+        run: |
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+          # Further AWS CLI commands
+
+      - name: Set up Google Cloud CLI
+        run: |
+          echo "$GOOGLE_APPLICATION_CREDENTIALS" > /tmp/key.json
+          gcloud auth activate-service-account --key-file=/tmp/key.json
+          # Further GCP CLI commands
+
+      - name: Google Cloud CLI Script
+        run: |
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          # Further GCP CLI commands
+
+  update_build_status:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+              --header 'Content-Type: application/json' \
+              --data "{ 'event_type': 'build_status', 'client_payload': { 'build_result_url': 'https://bamboo.air-watch.com/browse/${{ github.run_number }}', 'context': 'KLMN', 'commit_id': '${{ github.sha }}', 'build_status': 'InProgress', 'build_plan_key': 'APAT-KLMN', 'build_number': '${{ github.run_number }}', 'git_url': '${{ github.repository }}' } }"
+
+  docker_artifact:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+
+      - name: Save Docker Image as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+          if-no-files-found: error
+
+  docker_shell:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Docker Operations
+        run: |
+          DOCKER_USERNAME="your_docker_username"
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          # Further Docker commands
