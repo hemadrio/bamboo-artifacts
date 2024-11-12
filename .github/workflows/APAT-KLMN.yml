@@ -1,0 +1,140 @@
+name: Bamboo Plan to GitHub Actions
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: \
+            AZURE_SUBSCRIPTION_ID: \
+            AZURE_CLIENT_ID: \
+            AZURE_CLIENT_SECRET: \
+            AZURE_TENANT_ID: \
+
+      - name: Azure CLI Script Execution
+        run: |
+          #!/bin/bash
+          AZURE_SUBSCRIPTION_ID="12345678-1234-1234-1234-123456789abc"
+          RESOURCE_GROUP="testResourceGroup"
+          ... # Continue with the Azure CLI script
+
+      - name: Setup AWS CLI
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: 
+          aws-secret-access-key: 
+          aws-region: us-east-1
+
+      - name: AWS CLI Script Execution
+        run: |
+          #!/bin/bash
+          AWS_REGION="us-east-1"
+          ... # Continue with the AWS CLI script
+
+      - name: Setup Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v0
+        with:
+          project_id: 
+          service_account_key: 
+
+      - name: Google Cloud CLI Script Execution
+        run: |
+          #!/bin/bash
+          PROJECT_ID="test-project"
+          ... # Continue with the Google Cloud CLI script
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "$GITHUB_WEBHOOK_URL" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: $GITHUB_TOKEN' \
+            --header 'Content-Type: application/json' \
+            --data "{ ... }"
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+          docker save -o $IMAGE_NAME-$TAG.tar $IMAGE_NAME:$TAG
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: $IMAGE_NAME-$TAG.tar
+
+      - name: Download and Load Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Use Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker load -i $IMAGE_NAME-$TAG.tar
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: 
+          password: 
+
+      - name: Multi-Stage Docker Build
+        run: |
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)
+          docker pull "$REGISTRY_URL/$IMAGE_NAME:cache" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . --cache-from "$REGISTRY_URL/$IMAGE_NAME:cache"
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" --cache-from "$REGISTRY_URL/$IMAGE_NAME:cache" .
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+
+      - name: Cleanup Docker Images
+        run: |
+          docker image prune -f
+          docker rmi $(docker images -f "dangling=true" -q)
+
+      - name: Docker Compose Deployment
+        run: |
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          docker-compose -f docker-compose.prod.yml down -v
+
+      - name: Logout from Docker Hub
+        run: |
+          docker logout
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/test-reports/*.xml'
+
+      - name: Generate Test Reports
+        uses: danielpalme/ReportGenerator-GitHub-Action@5
+        with:
+          reports: '**/test-reports/*.xml'
+          targetdir: 'test-report'
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact-option
+          path: target
