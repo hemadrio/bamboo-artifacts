@@ -1,0 +1,457 @@
+name: KLMN
+description: KLMN
+on:
+  push:
+    branches:
+      - main  # Replace with your actual branch name
+jobs:
+  Build-Test-and-Publish-Sonar-and-Code-Coverage-Report:
+    name: Build, Test and Publish Sonar and Code Coverage Report
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          #!/bin/bash
+          # Azure CLI Script for Bamboo Plan - Advanced Configuration
+          # Assumptions: Replace the variables with actual values when ready.
+
+          # Define environment variables and credentials for the test script
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"  # Adding random suffix to avoid conflicts
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          SUBNET_NAME="testSubnet"
+          ADDRESS_PREFIX="10.1.0.0/16"
+          SUBNET_PREFIX="10.1.0.0/24"
+          VM_NAME="testVM"
+          VM_SIZE="Standard_B1s"
+          ADMIN_USERNAME="azureuser"
+          ADMIN_PASSWORD="ComplexPassword123!" # For testing only; use secure methods for production.
+
+          # Login to Azure
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+
+          # Set the Azure subscription
+          echo "Setting subscription to $AZURE_SUBSCRIPTION_ID..."
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+
+          # Create a resource group
+          echo "Creating resource group $RESOURCE_GROUP in $LOCATION..."
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+
+          # Create a storage account with advanced network rules
+          echo "Creating storage account $STORAGE_ACCOUNT_NAME in resource group $RESOURCE_GROUP..."
+          az storage account create \
+              --name $STORAGE_ACCOUNT_NAME \
+              --resource-group $RESOURCE_GROUP \
+              --location $LOCATION \
+              --sku Standard_LRS \
+              --enable-hierarchical-namespace true \
+              --allow-blob-public-access false \
+              --kind StorageV2
+
+          # Create a container within the storage account
+          echo "Creating container $CONTAINER_NAME in storage account $STORAGE_ACCOUNT_NAME..."
+          STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" -o tsv)
+          az storage container create --name $CONTAINER_NAME --account-name $STORAGE_ACCOUNT_NAME --account-key $STORAGE_KEY
+
+          # Provision a virtual network and subnet
+          echo "Creating virtual network $VNET_NAME and subnet $SUBNET_NAME..."
+          az network vnet create \
+              --resource-group $RESOURCE_GROUP \
+              --name $VNET_NAME \
+              --address-prefix $ADDRESS_PREFIX \
+              --subnet-name $SUBNET_NAME \
+              --subnet-prefix $SUBNET_PREFIX
+
+          # Create a virtual machine
+          echo "Creating virtual machine $VM_NAME in $RESOURCE_GROUP..."
+          az vm create \
+              --resource-group $RESOURCE_GROUP \
+              --name $VM_NAME \
+              --image UbuntuLTS \
+              --size $VM_SIZE \
+              --admin-username $ADMIN_USERNAME \
+              --admin-password $ADMIN_PASSWORD \
+              --vnet-name $VNET_NAME \
+              --subnet $SUBNET_NAME \
+              --generate-ssh-keys
+
+          # Configure network security group rules
+          echo "Configuring network security group rules for SSH access..."
+          NSG_NAME="${VM_NAME}NSG"
+          az network nsg rule create \
+              --resource-group $RESOURCE_GROUP \
+              --nsg-name $NSG_NAME \
+              --name SSHAllowRule \
+              --priority 1001 \
+              --protocol Tcp \
+              --destination-port-range 22 \
+              --access Allow
+
+          # Assign role-based access to storage account
+          echo "Assigning Contributor role to the storage account..."
+          STORAGE_ACCOUNT_ID=$(az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP --query "id" -o tsv)
+          az role assignment create \
+              --assignee $AZURE_CLIENT_ID \
+              --role "Storage Blob Data Contributor" \
+              --scope $STORAGE_ACCOUNT_ID
+
+          # Output the results of the resources created
+          echo "Resources created successfully."
+          echo "Resource Group: $RESOURCE_GROUP"
+          echo "Storage Account: $STORAGE_ACCOUNT_NAME"
+          echo "Virtual Network: $VNET_NAME"
+          echo "Subnet: $SUBNET_NAME"
+          echo "Virtual Machine: $VM_NAME"
+
+          # Clean up (optional)
+          echo "Cleaning up resources... Uncomment if needed."
+          # az group delete --name $RESOURCE_GROUP --no-wait --yes
+
+          echo "Azure CLI Script execution completed."
+      - name: AWS CLI Script
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: "us-east-1"
+        run: |
+          #!/bin/bash
+          # AWS CLI Script for Bamboo Plan - Advanced Configuration
+          # Assumptions: Replace variables with actual values when deploying to production.
+
+          # Define environment variables and credentials for the test script
+          AWS_PROFILE="test-profile"  # Assumes AWS CLI profile is set up
+          RESOURCE_TAG="BambooTestResource"
+          VPC_NAME="TestVPC"
+          SUBNET_NAME="TestSubnet"
+          SECURITY_GROUP_NAME="TestSecurityGroup"
+          INSTANCE_TYPE="t2.micro"
+          KEY_NAME="TestKeyPair"
+          S3_BUCKET_NAME="test-bamboo-s3-bucket-$RANDOM"  # Add randomness to avoid conflicts
+
+          # Configure AWS CLI
+          echo "Configuring AWS CLI with profile $AWS_PROFILE and region $AWS_REGION..."
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+
+          # Create an S3 bucket with public access blocked
+          echo "Creating an S3 bucket: $S3_BUCKET_NAME..."
+          aws s3api create-bucket --bucket $S3_BUCKET_NAME --region $AWS_REGION --create-bucket-configuration LocationConstraint=$AWS_REGION
+          aws s3api put-public-access-block --bucket $S3_BUCKET_NAME --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+          # Create a new VPC
+          echo "Creating a new VPC: $VPC_NAME..."
+          VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query 'Vpc.VpcId' --output text --profile $AWS_PROFILE)
+          aws ec2 create-tags --resources $VPC_ID --tags Key=Name,Value=$VPC_NAME --profile $AWS_PROFILE
+
+          # Create a subnet within the VPC
+          echo "Creating a subnet: $SUBNET_NAME..."
+          SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24 --query 'Subnet.SubnetId' --output text --profile $AWS_PROFILE)
+
+          # Create a security group with SSH access
+          echo "Creating a security group: $SECURITY_GROUP_NAME..."
+          SECURITY_GROUP_ID=$(aws ec2 create-security-group --group-name $SECURITY_GROUP_NAME --description "Security group for SSH access" --vpc-id $VPC_ID --query 'GroupId' --output text --profile $AWS_PROFILE)
+          aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --profile $AWS_PROFILE
+
+          # Create an EC2 instance with the security group
+          echo "Launching an EC2 instance with security group and subnet..."
+          aws ec2 run-instances \
+              --image-id ami-1234567890abcdef0 \
+              --instance-type $INSTANCE_TYPE \
+              --key-name $KEY_NAME \
+              --security-group-ids $SECURITY_GROUP_ID \
+              --subnet-id $SUBNET_ID \
+              --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$RESOURCE_TAG}]" \
+              --profile $AWS_PROFILE
+
+          # Output details of the resources created
+          echo "Resources created successfully:"
+          echo "S3 Bucket: $S3_BUCKET_NAME"
+          echo "VPC ID: $VPC_ID"
+          echo "Subnet ID: $SUBNET_ID"
+          echo "Security Group ID: $SECURITY_GROUP_ID"
+
+          # Optional: Clean up resources (uncomment if needed)
+          # aws ec2 terminate-instances --instance-ids <Instance ID>
+          # aws ec2 delete-security-group --group-id $SECURITY_GROUP_ID
+          # aws ec2 delete-subnet --subnet-id $SUBNET_ID
+          # aws ec2 delete-vpc --vpc-id $VPC_ID
+          # aws s3api delete-bucket --bucket $S3_BUCKET_NAME --region $AWS_REGION
+
+          echo "AWS CLI Script execution completed."
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          #!/bin/bash
+          # Google Cloud CLI Script for Bamboo Plan - Advanced Configuration
+          # Assumptions: Replace variables with actual values when deploying to production.
+
+          # Define environment variables and credentials for the test script
+          PROJECT_ID="test-project"
+          ZONE="us-central1-a"
+          NETWORK_NAME="test-network"
+          SUBNET_NAME="test-subnet"
+          VM_NAME="test-vm"
+          MACHINE_TYPE="n1-standard-1"
+          BUCKET_NAME="test-bamboo-bucket-$RANDOM"  # Add randomness to avoid conflicts
+
+          # Authenticate with Google Cloud
+          echo "Authenticating with Google Cloud..."
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+
+          # Set the project
+          echo "Setting Google Cloud project to $PROJECT_ID..."
+          gcloud config set project $PROJECT_ID
+
+          # Create a Cloud Storage bucket
+          echo "Creating a Cloud Storage bucket: $BUCKET_NAME..."
+          gcloud storage buckets create gs://$BUCKET_NAME --project $PROJECT_ID --location $ZONE --uniform-bucket-level-access
+
+          # Create a custom VPC network
+          echo "Creating a VPC network: $NETWORK_NAME..."
+          gcloud compute networks create $NETWORK_NAME --subnet-mode=custom
+
+          # Create a subnet within the VPC
+          echo "Creating a subnet: $SUBNET_NAME..."
+          gcloud compute networks subnets create $SUBNET_NAME --network=$NETWORK_NAME --range=10.0.1.0/24 --region=$ZONE
+
+          # Create a firewall rule for SSH access
+          echo "Creating a firewall rule for SSH access..."
+          gcloud compute firewall-rules create allow-ssh --network $NETWORK_NAME --allow tcp:22
+
+          # Launch a Compute Engine VM
+          echo "Creating a Compute Engine VM instance: $VM_NAME..."
+          gcloud compute instances create $VM_NAME \
+              --zone=$ZONE \
+              --machine-type=$MACHINE_TYPE \
+              --subnet=$SUBNET_NAME \
+              --tags=http-server,https-server \
+              --metadata=startup-script='#!/bin/bash
+          echo "Hello, World!" > /var/www/html/index.html' \
+              --image-family=debian-10 \
+              --image-project=debian-cloud
+
+          # Output the resources created
+          echo "Resources created successfully:"
+          echo "Cloud Storage Bucket: gs://$BUCKET_NAME"
+          echo "VPC Network: $NETWORK_NAME"
+          echo "Subnet: $SUBNET_NAME"
+          echo "Compute Engine VM: $VM_NAME"
+
+          # Optional: Clean up resources (uncomment if needed)
+          # gcloud compute instances delete $VM_NAME --zone $ZONE --quiet
+          # gcloud compute firewall-rules delete allow-ssh --quiet
+          # gcloud compute networks subnets delete $SUBNET_NAME --region=$ZONE --quiet
+          # gcloud compute networks delete $NETWORK_NAME --quiet
+          # gsutil rm -r gs://$BUCKET_NAME
+
+          echo "Google Cloud CLI Script execution completed."
+  Update-build-status:
+    name: Update build status
+    runs-on: ubuntu-custom-runner
+    needs: [Build-Test-and-Publish-Sonar-and-Code-Coverage-Report] # Add dependency on the previous job
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Update Build Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+          SVC_BOT_WS1_GITHUB_TOKEN_SECRET: ${{ secrets.SVC_BOT_WS1_GITHUB_TOKEN_SECRET }}
+        run: |
+          curl -v POST "${BAMBOO_GITHUB_WEBHOOK_URL}" \
+                  --header 'Accept: application/vnd.github+json' \
+                  --header 'x-github-token: ${SVC_BOT_WS1_GITHUB_TOKEN_SECRET}' \
+                  --header 'Content-Type: application/json' \
+                  --data "{
+                    \"event_type\": \"build_status\",
+                    \"client_payload\": {
+                      \"build_result_url\": \"https://bamboo.air-watch.com/browse/${bamboo.planKey}-${bamboo.buildNumber}\",
+                      \"context\": \"${bamboo.planName}\",
+                      \"commit_id\": \"${bamboo.planRepository.revision}\",
+                      \"build_status\": \"InProgress\",
+                      \"build_plan_key\": \"${bamboo.planKey}\",
+                      \"build_number\": \"${bamboo.buildNumber}\",
+                      \"git_url\": \"${bamboo.planRepository.repositoryUrl}\"
+                    }
+                  }"
+  Docker-arti:
+    name: Docker-arti
+    runs-on: ubuntu-custom-runner
+    needs: [Update-build-status] # Add dependency on the previous job
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          #!/bin/bash
+          # Bamboo job: Build Docker Image and Save as Artifact
+
+          # Environment variables
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+
+          # Step 1: Build the Docker image
+          echo "Building Docker image: $IMAGE_NAME:$TAG..."
+          docker build -t $IMAGE_NAME:$TAG .
+
+          # Step 2: Save the Docker image to a tar file
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+          echo "Saving Docker image to artifact: $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR $IMAGE_NAME:$TAG
+
+          # Step 3: Verify image saved correctly
+          if [ -f "$IMAGE_TAR" ]; then
+              echo "Docker image saved successfully: $IMAGE_TAR"
+          else
+              echo "Error: Failed to save Docker image."
+              exit 1
+          fi
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: ${{ github.workspace }}/my-complex-image-latest.tar
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: ${{ github.workspace }}/IMAGE_TAR/image/arti
+      - name: Load and Run Docker Image
+        run: |
+          #!/bin/bash
+          # Bamboo job: Download and Use Docker Image Artifact
+
+          # Define variables
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          IMAGE_TAR="$IMAGE_NAME-$TAG.tar"
+
+          # Step 1: Download the Docker image artifact
+          echo "Downloading Docker image artifact..."
+          cp "${{ github.workspace }}/docker-image-artifact/$IMAGE_TAR" .
+
+          # Step 2: Load the Docker image
+          echo "Loading Docker image from artifact..."
+          docker load -i $IMAGE_TAR
+
+          # Step 3: Run the Docker container
+          echo "Running Docker container from loaded image..."
+          docker run -d --name "$IMAGE_NAME-container" $IMAGE_NAME:$TAG
+
+          # Optional: Verify container is running
+          echo "Verifying container status..."
+          docker ps -f "name=$IMAGE_NAME-container"
+      - name: Run JUnit Tests
+        run: echo "JUnit test execution simulated."
+      - name: Publish JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: "**/test-reports/*.xml"
+      - name: Maven Build
+        run: |
+          echo "Starting build process..."
+          mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory
+      - name: Download Artifacts from Another Plan
+        uses: actions/download-artifact@v4
+        if: ${{ needs.previous_job.outputs.testvar == 'true' }}
+        with:
+          name: artifact-from-APAT-EFG  # Replace with the actual artifact name from the APAT-EFG plan
+          path: /test1/1
+          workflow: APAT-EFG.yaml  # Replace with the actual workflow file name for the APAT-EFG plan
+        continue-on-error: true
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  Docker-shell:
+    name: Docker-shell
+    runs-on: ubuntu-custom-runner
+    needs: [Docker-arti] # Add dependency on the previous job
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          #!/bin/bash
+          # Bamboo Complex Docker Operations Script
+
+          # Environment Variables (assume sample values)
+          IMAGE_NAME="my-complex-image"
+          REGISTRY_URL="docker.io/$DOCKER_USERNAME"
+          TAG=$(date +%Y%m%d%H%M)  # Tag using timestamp for versioning
+          CACHE_IMAGE="$REGISTRY_URL/$IMAGE_NAME:cache"
+
+          # Login to Docker Hub
+          echo "Logging into Docker Hub..."
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+
+          # Build multi-stage Docker image with caching
+          echo "Building Docker image with multi-stage builds and caching..."
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "$IMAGE_NAME:builder" . \
+              --cache-from "$CACHE_IMAGE" \
+              --build-arg CACHEBUST=$(date +%s)  # Optional cache busting
+
+          # Testing container builds and setup
+          echo "Running tests on Docker image..."
+          docker run --rm "$IMAGE_NAME:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+
+          # Continue to production build stage
+          echo "Finalizing production build..."
+          docker build --target final -t "$IMAGE_NAME:$TAG" -t "$IMAGE_NAME:latest" \
+              --cache-from "$CACHE_IMAGE" .
+
+          # Pushing images to Docker Hub
+          echo "Tagging and pushing images..."
+          docker tag "$IMAGE_NAME:$TAG" "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker tag "$IMAGE_NAME:latest" "$REGISTRY_URL/$IMAGE_NAME:latest"
+
+          docker push "$REGISTRY_URL/$IMAGE_NAME:$TAG"
+          docker push "$REGISTRY_URL/$IMAGE_NAME:latest"
+
+          # Cleanup dangling and old images (optional)
+          echo "Cleaning up old Docker images..."
+          docker image prune -f
+          docker rmi "$(docker images -f \"dangling=true\" -q)"
+
+          # Multi-container setup and orchestration (Docker Compose example)
+          echo "Starting multi-container environment using Docker Compose..."
+          docker-compose -f docker-compose.prod.yml up -d --build
+
+          # Verify containers are running correctly
+          echo "Checking container status..."
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+
+          # Log extraction for analysis (optional)
+          echo "Extracting logs for analysis..."
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+
+          # Teardown after testing (optional)
+          echo "Shutting down the environment..."
+          docker-compose -f docker-compose.prod.yml down -v
+
+          # Logout from Docker Hub
+          echo "Logging out from Docker Hub..."
+          docker logout
+
+          echo "Docker operations completed successfully."
