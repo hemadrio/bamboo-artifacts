@@ -1,0 +1,114 @@
+name: Installation
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  Build_Test_and_Publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script Execution
+        env:
+          AZURE_SUBSCRIPTION_ID: 12345678-1234-1234-1234-123456789abc
+          RESOURCE_GROUP: testResourceGroup
+          LOCATION: eastus
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          #!/bin/bash
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          ...
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          ...
+
+      - name: AWS CLI Script Execution
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: test-profile
+        run: |
+          #!/bin/bash
+          S3_BUCKET_NAME="test-bamboo-s3-bucket-$RANDOM"
+          ...
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          ...
+
+      - name: GCP CLI Script Execution
+        env:
+          PROJECT_ID: test-project
+          ZONE: us-central1-a
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          #!/bin/bash
+          BUCKET_NAME="test-bamboo-bucket-$RANDOM"
+          ...
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          ...
+
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.GITHUB_WEBHOOK_URL }}" \
+          --header 'Accept: application/vnd.github+json' \
+          --header 'x-github-token: ${{ secrets.GITHUB_TOKEN }}' \
+          --header 'Content-Type: application/json' \
+          --data "{ ... }"
+
+  Docker_Operations:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG=$(date +%Y%m%d%H%M)
+          docker build -t $IMAGE_NAME:$TAG .
+          docker tag $IMAGE_NAME:$TAG ${{ secrets.DOCKER_USERNAME }}/$IMAGE_NAME:$TAG
+          docker push ${{ secrets.DOCKER_USERNAME }}/$IMAGE_NAME:$TAG
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+
+      - name: Download and Use Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Run Docker Container
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name my-complex-image-container my-complex-image:latest
+
+      - name: Report Unit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/test-reports/*.xml'
+
+      - name: Maven Build
+        run: |
+          JAVA_OPTS="-Xmx256m -Xms128m" mvn clean install
+
+      - name: Artifact Download
+        uses: actions/download-artifact@v4
+        with:
+          name: test-artifact
+          path: /test1/1
+          if-no-files-found: ignore
+
