@@ -1,0 +1,111 @@
+name: KLMN Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: '12345678-1234-1234-1234-123456789abc'
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          echo "Logging into Azure..."
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          # (Rest of the azure shell script here)
+
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: 'us-east-1'
+          AWS_PROFILE: 'test-profile'
+        run: |
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # (Rest of the AWS shell script here)
+
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          PROJECT_ID: 'test-project'
+          ZONE: 'us-central1-a'
+        run: |
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          gcloud config set project $PROJECT_ID
+          # (Rest of the gcp shell script here)
+
+  update-build-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Update Build Status
+        env:
+          GITHUB_WEBHOOK_URL: ${{ secrets.GITHUB_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -v POST "$GITHUB_WEBHOOK_URL" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: $GITHUB_TOKEN' \
+            --header 'Content-Type: application/json' \
+            --data "{
+              \"event_type\": \"build_status\",
+              \"client_payload\": {
+                \"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.event.repository.name }}-${{ github.run_id }}\",
+                \"context\": \"${{ github.event.repository.name }}\",
+                \"commit_id\": \"${{ github.sha }}\",
+                \"build_status\": \"InProgress\",
+                \"build_plan_key\": \"${{ github.event.repository.name }}\",
+                \"build_number\": \"${{ github.run_number }}\",
+                \"git_url\": \"${{ github.event.repository.clone_url }}\"
+              }
+            }"
+
+  docker-arti:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build Docker Image
+        run: |
+          docker build -t my-complex-image:latest .
+
+      - name: Save Docker Image as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+
+      - name: Download and Use Docker Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: .
+
+      - name: Load and Run Docker Image
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name my-complex-image-container my-complex-image:latest
+
+  docker-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Docker Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker build -t my-complex-image:latest .
+          docker tag my-complex-image:latest docker.io/$DOCKER_USERNAME/my-complex-image:latest
+          docker push docker.io/$DOCKER_USERNAME/my-complex-image:latest
