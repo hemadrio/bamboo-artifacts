@@ -1,0 +1,119 @@
+name: KLMN
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          # Azure CLI Script
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          # ... rest of the Azure script
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_PROFILE: ${{ secrets.AWS_PROFILE }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # AWS CLI Script
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID --profile $AWS_PROFILE
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY --profile $AWS_PROFILE
+          # ... rest of the AWS script
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+        run: |
+          # Google Cloud CLI Script
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          gcloud config set project $PROJECT_ID
+          # ... rest of the Google Cloud script
+      - name: Update Build Status (InProgress)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+        run: |
+          curl -v POST "$BAMBOO_GITHUB_WEBHOOK_URL" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: $GITHUB_TOKEN' \
+            --header 'Content-Type: application/json' \
+            --data '{\"event_type\": \"build_status\",\"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.run_id }}\",\"context\": \"${{ github.workflow }}\",\"commit_id\": \"${{ github.sha }}\",\"build_status\": \"InProgress\",\"build_plan_key\": \"${{ github.workflow }}\",\"build_number\": \"${{ github.run_number }}\",\"git_url\": \"${{ github.repository }}\"}}'
+      - name: Build and Save Docker Image
+        run: |
+          # Build and Save Docker Image Script
+          docker build -t my-complex-image:latest .
+          docker save -o my-complex-image-latest.tar my-complex-image:latest
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-complex-image-latest.tar
+          path: my-complex-image-latest.tar
+          if-no-files-found: error
+      - name: Download and Run Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: my-complex-image-latest.tar
+          path: IMAGE_TAR/image/arti
+        continue-on-error: true
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name my-complex-image-container my-complex-image:latest
+          docker ps -f "name=my-complex-image-container"
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action/composite@v2
+        if: always()
+        with:
+          files: "**/test-reports/*.xml"
+      - name: Maven Command
+        run: echo "Starting build process..." mvn clean install
+        working-directory: /another/sub/directory
+      - name: Download Optional Artifacts
+        uses: actions/download-artifact@v4
+        if: ${{ env.testvar }}
+        with:
+          name: artifact-option
+          path: /test1/1
+        continue-on-error: true
+      - name: Upload artifact-option
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+      - name: Complex Docker Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          REGISTRY_URL: docker.io/${{ secrets.DOCKER_USERNAME }}
+        run: |
+          # Complex Docker Operations Script
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          # ... rest of the Docker script
+  update_status:
+    runs-on: ubuntu-custom-runner
+    needs: build
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Update Build Status (Completed)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+        run: |
+          curl -v POST "$BAMBOO_GITHUB_WEBHOOK_URL" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: $GITHUB_TOKEN' \
+            --header 'Content-Type: application/json' \
+            --data '{\"event_type\": \"build_status\",\"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.run_id }}\",\"context\": \"${{ github.workflow }}\",\"commit_id\": \"${{ github.sha }}\",\"build_status\": \"${{ job.status }}\",\"build_plan_key\": \"${{ github.workflow }}\",\"build_number\": \"${{ github.run_number }}\",\"git_url\": \"${{ github.repository }}\"}}'
