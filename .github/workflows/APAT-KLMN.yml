@@ -1,0 +1,109 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main # Replace with your branch name
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          # Azure CLI Script - See Bamboo configuration for details
+          # Replace placeholders with actual script content
+          # ... (Azure CLI commands)
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # AWS CLI Script - See Bamboo configuration for details
+          # Replace placeholders with actual script content
+          # ... (AWS CLI commands)
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+        run: |
+          # Google Cloud CLI Script - See Bamboo configuration for details
+          # Replace placeholders with actual script content
+          # ... (gcloud commands)
+  update-build-status:
+    runs-on: ubuntu-custom-runner
+    needs: build-test-publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Build Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+        run: |
+          # Update build status - See Bamboo configuration for details
+          # Replace placeholders with actual script content
+          # ... (curl command to update build status)
+  docker-build-artifact:
+    runs-on: ubuntu-custom-runner
+    needs: update-build-status
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Build and Save
+        run: |
+          # Docker build and save - See Bamboo configuration for details
+          # Replace placeholders with actual script content
+          # ... (docker build, docker save commands)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar # Replace with the actual path
+          if-no-files-found: error
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: docker-image-artifact
+      - name: Docker Load and Run
+        run: |
+          # Docker load and run - See Bamboo configuration for details
+          # Replace placeholders with actual script content
+          # ... (docker load, docker run commands)
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action/composite@v2
+        with:
+          check_name: JUnit Test Results
+          files: "**/test-reports/*.xml"
+      - name: Maven Build
+        run: |
+          echo "Starting build process..."
+          mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+      - uses: actions/download-artifact@v4
+        with:
+          name: artifact-option # Replace with actual artifact name from APAT-EFG
+          path: /test1/1
+          continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  docker-operations:
+    runs-on: ubuntu-custom-runner
+    needs: docker-build-artifact
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          # Complex Docker operations - See Bamboo configuration for details
+          # Replace placeholders with actual script content
+          # ... (docker login, docker build, docker push, docker-compose commands)
