@@ -1,0 +1,108 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main # Replace with your branch name
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          # Azure CLI Script - See Bamboo 'azure-shell-hemadri' task for original script
+          # ... (paste the script content here, replacing placeholders with secrets)
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_PROFILE: ${{ secrets.AWS_PROFILE }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # AWS CLI Script - See Bamboo 'AWS-Shell' task for original script
+          # ... (paste the script content here, replacing placeholders with secrets)
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+          ZONE: ${{ secrets.ZONE }}
+        run: |
+          # Google Cloud CLI Script - See Bamboo 'gcp-shell' task for original script
+          # ... (paste the script content here, replacing placeholders with secrets)
+  update-build-status:
+    runs-on: ubuntu-custom-runner
+    needs: build-test-publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Build Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.G_SVC_BOT_WS1_GITHUB_TOKEN_SECRET }}
+          BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+        run: |
+          curl -v POST "${BAMBOO_GITHUB_WEBHOOK_URL}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header "x-github-token: $GITHUB_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "{\"event_type\": \"build_status\",\"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.repository }}-${{ github.run_number }}\",\"context\": \"${{ github.workflow }}\",\"commit_id\": \"${{ github.sha }}\",\"build_status\": \"InProgress\",\"build_plan_key\": \"${{ github.repository }}\",\"build_number\": \"${{ github.run_number }}\",\"git_url\": \"${{ github.repository_url }}\"}}"
+  docker-arti:
+    runs-on: ubuntu-custom-runner
+    needs: update-build-status
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Build and Save
+        run: |
+          # Docker Build and Save - See Bamboo 'Docker-with-art' task for original script
+          # ... (paste the script content here)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+          if-no-files-found: error
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: IMAGE_TAR/image/arti
+      - name: Docker Load and Run
+        run: |
+          # Docker Load and Run - See Bamboo 'use-artifact' task for original script
+          # ... (paste the script content here)
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action/composite@v2
+        with:
+          junit_files: "**/test-reports/*.xml"
+      - name: Maven Command
+        run: echo "Starting build process..." mvn clean install
+        working-directory: /another/sub/directory # Ensure this path exists
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+      - uses: actions/download-artifact@v4
+        if: ${{ env.testvar }}
+        with:
+          name: artifact-from-APAT-EFG # Replace with actual artifact name
+          path: /test1/1
+          continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  docker-shell:
+    runs-on: ubuntu-custom-runner
+    needs: docker-arti
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Shell Script
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          # Docker Shell Script - See Bamboo 'docker-shell' task for original script
+          # ... (paste the script content here, replacing placeholders with secrets)
+          docker login -u "$DOCKER_USERNAME" --password-stdin <(echo "$DOCKER_PASSWORD")
+          # ... rest of the script
