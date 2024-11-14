@@ -1,0 +1,103 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main # Replace with your branch name
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          # Azure CLI Script
+          # ... (Insert Azure CLI script here)
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_PROFILE: test-profile
+        run: |
+          # AWS CLI Script
+          # ... (Insert AWS CLI script here)
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          PROJECT_ID: test-project
+        run: |
+          # Google Cloud CLI Script
+          # ... (Insert Google Cloud CLI script here)
+  update_build_status:
+    runs-on: ubuntu-custom-runner
+    needs: build_test_publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Build Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+        run: |
+          # Update build status script
+          # ... (Insert update build status script here, replacing Bamboo variables)
+  docker_arti:
+    runs-on: ubuntu-custom-runner
+    needs: update_build_status
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Build and Save
+        run: |
+          # Docker build and save script
+          # ... (Insert Docker build and save script here)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+          if-no-files-found: error
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: IMAGE_TAR/image/arti
+      - name: Docker Load and Run
+        run: |
+          # Docker load and run script
+          # ... (Insert Docker load and run script here)
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: "**/test-reports/*.xml"
+      - name: Maven Command
+        run: echo "Starting build process..." mvn clean install
+        working-directory: /another/sub/directory
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+      - name: Download Optional Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact-option # Replace with actual artifact name from APAT-EFG
+          path: /test1/1
+          continue-on-error: true # Set to true as it's optional
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  docker_shell:
+    runs-on: ubuntu-custom-runner
+    needs: docker_arti
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Shell Script
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          REGISTRY_URL: docker.io/${{ secrets.DOCKER_USERNAME }}
+        run: |
+          # Complex Docker operations script
+          # ... (Insert Docker shell script here, replacing Bamboo variables with GitHub secrets)
