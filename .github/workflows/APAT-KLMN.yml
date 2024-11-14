@@ -1,0 +1,106 @@
+name: KLMN
+on:
+  push:
+jobs:
+  Build-Test-and-Publish-Sonar-and-Code-Coverage-Report:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Azure CLI Script
+        run: |
+          AZURE_SUBSCRIPTION_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          RESOURCE_GROUP="testResourceGroup"
+          LOCATION="eastus"
+          STORAGE_ACCOUNT_NAME="teststorageaccount$RANDOM"
+          CONTAINER_NAME="testcontainer"
+          VNET_NAME="testVnet"
+          SUBNET_NAME="testSubnet"
+          ADDRESS_PREFIX="10.1.0.0/16"
+          SUBNET_PREFIX="10.1.0.0/24"
+          VM_NAME="testVM"
+          VM_SIZE="Standard_B1s"
+          ADMIN_USERNAME="azureuser"
+          ADMIN_PASSWORD="${{ secrets.AZURE_ADMIN_PASSWORD }}"
+          az login --service-principal -u "${{ secrets.AZURE_CLIENT_ID }}" -p "${{ secrets.AZURE_CLIENT_SECRET }}" --tenant "${{ secrets.AZURE_TENANT_ID }}"
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+          az storage account create \
+              --name $STORAGE_ACCOUNT_NAME \
+              --resource-group $RESOURCE_GROUP \
+              --location $LOCATION \
+              --sku Standard_LRS \
+              --enable-hierarchical-namespace true \
+              --allow-blob-public-access false \
+              --kind StorageV2
+          STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" -o tsv)
+          az storage container create --name $CONTAINER_NAME --account-name $STORAGE_ACCOUNT_NAME --account-key $STORAGE_KEY
+          # ... (rest of the Azure script)
+      - name: AWS CLI Script
+        run: |
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"
+          # ... (rest of the AWS script using secrets)
+      - name: Google Cloud CLI Script
+        run: |
+          PROJECT_ID="test-project"
+          # ... (rest of the GCP script using secrets)
+  Update-build-status:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}" \
+          # ... (rest of the curl command using secrets)
+  Docker-arti:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          # ... (rest of the docker build and save script)
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: IMAGE_TAR
+          path: IMAGE_TAR/image/arti
+      - name: Load and Run Docker Image
+        run: |
+          # ... (rest of the docker load and run script)
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: "**/test-reports/*.xml"
+      - name: Maven Command
+        run: echo "Starting build process..." mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory
+      - name: Download Optional Artifact
+        uses: actions/download-artifact@v4
+        if: ${{ github.event.inputs.testvar }}
+        continue-on-error: true
+        with:
+          name: artifact-from-EFG
+          path: /test1/1
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  Docker-shell:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Complex Docker Operations
+        run: |
+          DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
+          DOCKER_PASSWORD="${{ secrets.DOCKER_PASSWORD }}"
+          # ... (rest of the complex docker script using secrets)
