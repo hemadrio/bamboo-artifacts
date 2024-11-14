@@ -1,0 +1,111 @@
+name: KLMN
+on:
+  push:
+jobs:
+  Build-Test-and-Publish-Sonar-and-Code-Coverage-Report:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          # Azure CLI Script
+          # ... (rest of the script)
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: us-east-1
+          AWS_PROFILE: test-profile
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # AWS CLI Script
+          # ... (rest of the script)
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          PROJECT_ID: test-project
+          ZONE: us-central1-a
+        run: |
+          # Google Cloud CLI Script
+          # ... (rest of the script)
+  Update-build-status:
+    runs-on: ubuntu-custom-runner
+    needs: Build-Test-and-Publish-Sonar-and-Code-Coverage-Report
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Update Build Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.G_SVC_BOT_WS1_GITHUB_TOKEN_SECRET }}
+          BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+        run: |
+          curl -v POST "${BAMBOO_GITHUB_WEBHOOK_URL}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: ${GITHUB_TOKEN}' \
+            --header 'Content-Type: application/json' \
+            --data "{\"event_type\": \"build_status\",\"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.workflow }}-${{ github.run_number }}\",\"context\": \"${{ github.workflow }}\",\"commit_id\": \"${{ github.sha }}\",\"build_status\": \"InProgress\",\"build_plan_key\": \"${{ github.workflow }}\",\"build_number\": \"${{ github.run_number }}\",\"git_url\": \"${{ github.repository }}\"}}"
+  Docker-arti:
+    runs-on: ubuntu-custom-runner
+    needs: Update-build-status
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker Build and Save
+        run: |
+          # Docker Build and Save Script
+          # ... (rest of the script)
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+          if-no-files-found: error
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: IMAGE_TAR/image/arti
+      - name: Docker Load and Run
+        run: |
+          # Docker Load and Run Script
+          # ... (rest of the script)
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: "**/test-reports/*.xml"
+      - name: Maven Command
+        run: echo "Starting build process..." mvn clean install
+        working-directory: /another/sub/directory
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+      - name: Download Optional Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact-option
+          path: /test1/1
+          continue-on-error: true
+      - name: Upload artifact-option
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  Docker-shell:
+    runs-on: ubuntu-custom-runner
+    needs: Docker-arti
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker Shell Script
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          # Complex Docker Operations Script
+          # ... (rest of the script)
