@@ -1,0 +1,121 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main  # Replace with your branch name
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-custom-runner
+    env:
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AWS_REGION: "us-east-1"
+      AWS_PROFILE: "test-profile" # Consider using OpenID Connect for AWS
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+      PROJECT_ID: "test-project"
+      ZONE: "us-central1-a"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure CLI Script
+        run: |
+          # Azure CLI Script
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          # ... (rest of the Azure script)
+      - name: AWS CLI Script
+        run: |
+          # AWS CLI Script
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # ... (rest of the AWS script)        
+      - name: Google Cloud CLI Script
+        run: |
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          gcloud config set project $PROJECT_ID
+          # ... (rest of the Google Cloud script)
+  update_build_status:
+    runs-on: ubuntu-custom-runner
+    needs: build_test_publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Build Status
+        run: |
+          curl -v POST "${{ secrets.bamboo_g_bamboo_github_webhook_url }}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: ${{ secrets.bamboo_g_svc_bot_ws1_github_token_secret }}' \
+            --header 'Content-Type: application/json' \
+            --data '{\"event_type\": \"build_status\",\"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.workflow }}-${{ github.run_number }}\",\"context\": \"${{ github.workflow }}\",\"commit_id\": \"${{ github.sha }}\",\"build_status\": \"InProgress\",\"build_plan_key\": \"${{ github.workflow }}\",\"build_number\": \"${{ github.run_number }}\",\"git_url\": \"${{ github.repository }}\"}}'
+  docker_arti:
+    runs-on: ubuntu-custom-runner
+    needs: update_build_status
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          docker build -t my-complex-image:latest .
+          docker save -o my-complex-image-latest.tar my-complex-image:latest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-artifact
+          path: my-complex-image-latest.tar
+      - name: Download and Use Docker Image
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name my-complex-image-container my-complex-image:latest
+          docker ps -f "name=my-complex-image-container"
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: '**/test-reports/*.xml'
+      - name: Maven Build
+        run: echo "Starting build process..." mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory # Ensure this directory exists
+      - uses: actions/download-artifact@v4
+        with:
+          name: artifact-option # Replace with actual artifact name from APAT-EFG
+          path: /test1/1
+          continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  docker_shell:
+    runs-on: ubuntu-custom-runner
+    needs: docker_arti
+    env:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      REGISTRY_URL: docker.io/${{ secrets.DOCKER_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Login
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Docker Build and Push
+        run: |
+          TAG=$(date +%Y%m%d%H%M)
+          CACHE_IMAGE="$REGISTRY_URL/my-complex-image:cache"
+          docker pull "$CACHE_IMAGE" || echo "No cache image found. Starting fresh build."
+          docker build --target builder -t "my-complex-image:builder" . --cache-from "$CACHE_IMAGE" --build-arg CACHEBUST=$(date +%s)
+          docker run --rm "my-complex-image:builder" ./run-tests.sh || { echo "Tests failed"; exit 1; }
+          docker build --target final -t "my-complex-image:$TAG" -t "my-complex-image:latest" --cache-from "$CACHE_IMAGE" .
+          docker tag "my-complex-image:$TAG" "$REGISTRY_URL/my-complex-image:$TAG"
+          docker tag "my-complex-image:latest" "$REGISTRY_URL/my-complex-image:latest"
+          docker push "$REGISTRY_URL/my-complex-image:$TAG"
+          docker push "$REGISTRY_URL/my-complex-image:latest"
+          docker image prune -f
+          docker rmi $(docker images -f "dangling=true" -q)
+          docker-compose -f docker-compose.prod.yml up -d --build
+          docker-compose -f docker-compose.prod.yml ps || { echo "Some containers failed to start"; exit 1; }
+          docker-compose -f docker-compose.prod.yml logs > docker_logs_$(date +%Y%m%d%H%M).log
+          docker-compose -f docker-compose.prod.yml down -v
+          docker logout
