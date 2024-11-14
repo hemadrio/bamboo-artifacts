@@ -1,0 +1,104 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main # Replace with your branch name
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          # Azure CLI Script (same as Bamboo, secrets replaced with placeholders)
+          az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+          az account set --subscription $AZURE_SUBSCRIPTION_ID
+          # ... (rest of the Azure script)
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set region $AWS_REGION
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          # ... (rest of the AWS script)
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+        run: |
+          echo "$GOOGLE_APPLICATION_CREDENTIALS" | base64 -d > gcloud-credentials.json
+          gcloud auth activate-service-account --key-file=gcloud-credentials.json
+          gcloud config set project $PROJECT_ID
+          # ... (rest of the GCP script)
+  update_build_status:
+    runs-on: ubuntu-custom-runner
+    needs: build_test_publish  # Ensure this runs after the previous job
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Build Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.G_SVC_BOT_WS1_GITHUB_TOKEN_SECRET }}
+        run: |
+          curl -v POST "${{ secrets.G_BAMBOO_GITHUB_WEBHOOK_URL }}"
+          # ... (rest of the curl command)
+  docker_arti:
+    runs-on: ubuntu-custom-runner
+    needs: update_build_status
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          # ... (docker build and save commands)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+          if-no-files-found: error
+          retention-days: 1 # Adjust retention as needed
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: IMAGE_TAR/image/arti
+      - name: Load and Run Docker Image
+        run: |
+          docker load -i my-complex-image-latest.tar
+          # ... (rest of the docker commands)
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:  # Replace with the actual path
+          files: "**/test-reports/*.xml"
+      - name: Maven Build
+        run: |
+           echo "Starting build process..." mvn clean install
+      - name: Download Optional Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact-option # Use a descriptive name
+          path: /test1/1
+          continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error # Or warn/ignore as per 'required' setting
+  docker_shell:
+    runs-on: ubuntu-custom-runner
+    needs: docker_arti
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Build, Push, and Compose
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          # ... (rest of the complex docker commands)
