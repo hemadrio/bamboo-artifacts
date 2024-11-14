@@ -1,0 +1,101 @@
+name: KLMN
+
+on: [push]
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout
+      - name: Azure CLI Script
+        run: |
+          # Azure CLI Script for GitHub Actions
+          # Replace placeholders with actual values from GitHub Secrets
+          AZURE_SUBSCRIPTION_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          RESOURCE_GROUP="testResourceGroup"
+          # ... (Rest of the Azure script with secrets)
+          az login --service-principal -u "${{ secrets.AZURE_CLIENT_ID }}" -p "${{ secrets.AZURE_CLIENT_SECRET }}" --tenant "${{ secrets.AZURE_TENANT_ID }}"
+          # ... (Rest of the Azure script)
+      - name: AWS CLI Script
+        run: |
+          # AWS CLI Script for GitHub Actions
+          # Replace placeholders with actual values from GitHub Secrets or environment variables.
+          AWS_REGION="us-east-1"
+          AWS_PROFILE="test-profile"  # Consider using OpenID Connect for authentication
+          # ... (Rest of the AWS script with secrets)
+          aws configure set region $AWS_REGION --profile $AWS_PROFILE
+          # ... (Rest of the AWS script)
+      - name: Google Cloud CLI Script
+        run: |
+          # Google Cloud CLI Script for GitHub Actions
+          # Replace placeholders with actual values from GitHub Secrets
+          PROJECT_ID="${{ secrets.GOOGLE_CLOUD_PROJECT_ID }}"
+          # ... (Rest of the Google Cloud script with secrets)
+          gcloud auth activate-service-account --key-file="${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}"
+          # ... (Rest of the Google Cloud script)
+      - name: Update Build Status (InProgress)
+        run: |
+          curl -v POST "${{ secrets.bamboo_g_bamboo_github_webhook_url }}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: ${{ secrets.bamboo_g_svc_bot_ws1_github_token_secret }}' \
+            --header 'Content-Type: application/json' \
+            --data '{\"event_type\": \"build_status\",\"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.repository }}-\${{ github.run_number }}\",\"context\": \"${{ github.workflow }}\",\"commit_id\": \"${{ github.sha }}\",\"build_status\": \"InProgress\",\"build_plan_key\": \"${{ github.repository }}\",\"build_number\": \"${{ github.run_number }}\",\"git_url\": \"${{ github.server_url }}/${{ github.repository }}\"}}'
+  docker-build-artifact:
+    runs-on: ubuntu-custom-runner
+    needs: build-test-publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          IMAGE_NAME="my-complex-image"
+          TAG="latest"
+          docker build -t $IMAGE_NAME:$TAG .
+          docker save -o $IMAGE_NAME-$TAG.tar $IMAGE_NAME:$TAG
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+      - name: Download and Run Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: IMAGE_TAR/image/arti
+      - run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name my-complex-image-container my-complex-image:latest
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action/composite@v2
+        with:
+          files: "**/test-reports/*.xml"
+      - name: Maven Build
+        run: echo "Starting build process..." && mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory # Update if needed
+      - name: Download Optional Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact-option # Replace with actual artifact name from APAT-EFG
+          path: /test1/1
+          continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+          retention-days: 1 # Example retention period
+  docker-operations:
+    runs-on: ubuntu-custom-runner
+    needs: docker-build-artifact
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Operations
+        run: |
+          # Docker Operations Script for GitHub Actions
+          # Replace placeholders with actual values from GitHub Secrets
+          DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
+          DOCKER_PASSWORD="${{ secrets.DOCKER_PASSWORD }}"
+          # ... (Rest of the Docker script with secrets)
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          # ... (Rest of the Docker script)
