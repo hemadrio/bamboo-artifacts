@@ -1,0 +1,114 @@
+name: KLMN
+on:
+  push:
+jobs:
+  Build-Test-and-Publish-Sonar-and-Code-Coverage-Report:
+    runs-on: ubuntu-custom-runner
+    env:
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AWS_REGION: "us-east-1"
+      AWS_PROFILE: ${{ secrets.AWS_PROFILE }}
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+      PROJECT_ID: "test-project"
+      ZONE: "us-central1-a"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: azure-shell-hemadri
+        shell: bash
+        run: |
+          # Azure CLI Script
+          # ... (rest of the script)
+      - name: AWS-Shell
+        shell: bash
+        run: |
+          # AWS CLI Script
+          # ... (rest of the script)
+      - name: gcp-shell
+        shell: bash
+        run: |
+          # Google Cloud CLI Script
+          # ... (rest of the script)
+  Update-build-status:
+    runs-on: ubuntu-custom-runner
+    needs: Build-Test-and-Publish-Sonar-and-Code-Coverage-Report
+    env:
+      BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+      SVC_BOT_WS1_GITHUB_TOKEN_SECRET: ${{ secrets.SVC_BOT_WS1_GITHUB_TOKEN_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Update-build-status
+        shell: bash
+        run: |
+          curl -v POST "${BAMBOO_GITHUB_WEBHOOK_URL}" \
+          --header 'Accept: application/vnd.github+json' \
+          --header 'x-github-token: ${SVC_BOT_WS1_GITHUB_TOKEN_SECRET}' \
+          --header 'Content-Type: application/json' \
+          --data "{\"event_type\": \"build_status\",\"client_payload\": {\"build_result_url\": \"https://bamboo.air-watch.com/browse/${{ github.workflow }}-${{ github.run_number }}\",\"context\": \"${{ github.workflow }}\",\"commit_id\": \"${{ github.sha }}\",\"build_status\": \"InProgress\",\"build_plan_key\": \"${{ github.workflow }}\",\"build_number\": \"${{ github.run_number }}\",\"git_url\": \"${{ github.repository }}\"}}"
+  Docker-arti:
+    runs-on: ubuntu-custom-runner
+    needs: Update-build-status
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker-with-art
+        shell: bash
+        run: |
+          # ... (rest of the script)
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: $IMAGE_NAME-$TAG.tar
+          path: $IMAGE_NAME-$TAG.tar
+          if-no-files-found: error
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: $IMAGE_NAME-$TAG.tar
+          path: IMAGE_TAR/image/arti
+      - name: use-artifact
+        shell: bash
+        run: |
+          # ... (rest of the script)
+      - name: Junit-case
+        uses: EnricoMi/publish-unit-test-result-action/composite@v2
+        with:
+          check_name: Junit Test Results
+          files: "**/test-reports/*.xml"
+      - name: maven-command
+        shell: bash
+        run: |
+          echo "Starting build process..." mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory
+      - name: Download Optional Artifacts
+        uses: actions/download-artifact@v4
+        if: ${{ github.event.inputs.testvar }}
+        with:
+          name: artifact-option
+          path: /test1/1
+        continue-on-error: true
+      - name: Upload artifact-option
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error
+  Docker-shell:
+    runs-on: ubuntu-custom-runner
+    needs: Docker-arti
+    env:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: docker-shell
+        shell: bash
+        run: |
+          # ... (rest of the script)
