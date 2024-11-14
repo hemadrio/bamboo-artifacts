@@ -1,0 +1,117 @@
+name: KLMN
+on:
+  push:
+    branches:
+      - main # Replace with your branch name
+jobs:
+  build_test_publish:
+    runs-on: ubuntu-custom-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure CLI Script
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          # Azure CLI Script - See Bamboo configuration for details
+          # ... (paste the Azure CLI script here, replacing placeholders with secrets)
+      - name: AWS CLI Script
+        env:
+          AWS_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_PROFILE: test-profile # Consider using AWS credentials directly
+        run: |
+          # AWS CLI Script - See Bamboo configuration for details
+          # ... (paste the AWS CLI script here, replacing placeholders with secrets)
+      - name: Google Cloud CLI Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          PROJECT_ID: test-project
+          ZONE: us-central1-a
+        run: |
+          # Google Cloud CLI Script - See Bamboo configuration for details
+          # ... (paste the Google Cloud CLI script here)
+  update_build_status:
+    runs-on: ubuntu-custom-runner
+    needs: build_test_publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Build Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.G_SVC_BOT_WS1_GITHUB_TOKEN_SECRET }}
+          BAMBOO_GITHUB_WEBHOOK_URL: ${{ secrets.BAMBOO_GITHUB_WEBHOOK_URL }}
+        run: |
+          curl -v POST "${BAMBOO_GITHUB_WEBHOOK_URL}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'x-github-token: ${GITHUB_TOKEN}' \
+            --header 'Content-Type: application/json' \
+            --data '{ 
+              "event_type": "build_status", 
+              "client_payload": { 
+                "build_result_url": "https://bamboo.air-watch.com/browse/${{ github.workflow }}-${{ github.run_number }}", 
+                "context": "${{ github.workflow }}", 
+                "commit_id": "${{ github.sha }}", 
+                "build_status": "InProgress",
+                "build_plan_key": "${{ github.workflow }}",
+                "build_number": "${{ github.run_number }}",
+                "git_url": "${{ github.repository }}"
+              }
+            }'
+  docker_arti:
+    runs-on: ubuntu-custom-runner
+    needs: update_build_status
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and Save Docker Image
+        run: |
+          # Build Docker image
+          docker build -t my-complex-image:latest .
+          # Save Docker image to tar file
+          docker save -o my-complex-image-latest.tar my-complex-image:latest
+      - uses: actions/upload-artifact@v3
+        with:
+          name: docker-image
+          path: my-complex-image-latest.tar
+      - name: Download and Use Docker Image
+        uses: actions/download-artifact@v3
+        with:
+          name: docker-image
+          path: IMAGE_TAR/image/arti # Adjust the path as needed
+        # continue-on-error: true # Use if the artifact is optional
+      - name: Load and Run Docker Image
+        run: |
+          docker load -i my-complex-image-latest.tar
+          docker run -d --name my-complex-image-container my-complex-image:latest
+      - name: JUnit Test Results
+        uses: EnricoMi/publish-unit-test-result-action/composite@v2
+        with:
+          check_name: JUnit Test Results
+          files: "**/test-reports/*.xml"
+      - name: Maven Command
+        run: echo "Starting build process..." mvn clean install
+        env:
+          JAVA_OPTS: "-Xmx256m -Xms128m"
+        working-directory: /another/sub/directory # Replace with your working directory
+      - name: Upload artifact-option
+        uses: actions/upload-artifact@v3
+        with:
+          name: artifact-option
+          path: target/*.*
+          if-no-files-found: error # or warn or ignore based on 'required' setting
+  docker_shell:
+    runs-on: ubuntu-custom-runner
+    needs: docker_arti
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Operations
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          REGISTRY_URL: docker.io/${{ secrets.DOCKER_USERNAME }}
+        run: |
+          # Docker operations script - See Bamboo configuration for details
+          # ... (paste the Docker operations script here, replacing placeholders with secrets)
+          # Multi-container setup (consider using docker/build-push-action and docker/compose-action)
